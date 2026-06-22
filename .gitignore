@@ -29,8 +29,7 @@ test_remotion_output/
 
 # Archives & large files
 *.zip
-remotion-test/
-remotion-test.zip
+remotion-test/node_modules/
 
 # OS
 .DS_Store
