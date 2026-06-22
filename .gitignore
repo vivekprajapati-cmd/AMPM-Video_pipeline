@@ -1,0 +1,44 @@
+# Environment & secrets
+.env
+.env.*
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Output & generated media
+output/
+output copy/
+test_output/
+test_remotion_output/
+*.mp4
+*.mp3
+*.wav
+*.jpg
+*.jpeg
+*.png
+*.gif
+
+# Logs
+*.log
+
+# Archives & large files
+*.zip
+remotion-test/
+remotion-test.zip
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Higgsfield cache
+models/
