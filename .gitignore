@@ -40,4 +40,4 @@ Thumbs.db
 .idea/
 
 # Higgsfield cache
-models/
+# models/ — intentionally tracked
