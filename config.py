@@ -56,7 +56,7 @@ def resolve_avatar_image(persona_id: str | None) -> str:
     return (HEYGEN_AVATAR_IMG_MAP.get(persona_id or "", "") or HEYGEN_AVATAR_IMG_DEFAULT).strip()
 
 # ── Model IDs ─────────────────────────────────────────────────────────────────
-CLAUDE_MODEL = "claude-sonnet-4-5-20251022"
+CLAUDE_MODEL = "claude-sonnet-4-6"
 GROQ_MODEL = "llama-3.3-70b-versatile"          # script generation — primary
 GROQ_SUMMARIZE_MODEL = "llama-3.1-8b-instant"   # article summarization — pure extraction, separate TPD quota
 GROQ_FALLBACK_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # fallback when primary hits TPD limit
@@ -98,6 +98,7 @@ TYPE2_AVATAR_COUNT        = 2
 BASE_DIR = Path(__file__).parent
 OUTPUT_DIR = BASE_DIR / "output"
 SYSTEM_PROMPT_PATH = BASE_DIR / "system_prompt.txt"
+AMPM_FINAL_CARD = BASE_DIR / "AMPM-FINAL_CARD.mp4"
 
 OUTPUT_DIR.mkdir(exist_ok=True)
 

@@ -25,10 +25,33 @@ def _resolve_higgsfield() -> str:
     )
 
 
+_CMD_UNSAFE = str.maketrans({
+    "&": "and",
+    "|": ",",
+    "<": "",
+    ">": "",
+    "^": "",
+})
+
+
+def _sanitize_prompt(arg: str) -> str:
+    """Replace cmd.exe shell operators in prompt text so .cmd wrappers don't split on them."""
+    return arg.translate(_CMD_UNSAFE)
+
+
 def _run_cmd(cmd: list[str], timeout: int) -> str:
     """Runs a command, returns stdout. Raises RuntimeError on failure."""
+    # Sanitize every non-flag argument (prompt text) — Windows .cmd files re-expand %*
+    # which means & | < > can break the command even inside double-quoted args.
+    safe_cmd = []
+    for arg in cmd:
+        # Only sanitize value args (not flags like --prompt, --aspect_ratio, etc.)
+        if arg.startswith("--") or arg in ("generate", "create", "wait", "get", "model"):
+            safe_cmd.append(arg)
+        else:
+            safe_cmd.append(_sanitize_prompt(arg))
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        result = subprocess.run(safe_cmd, capture_output=True, text=True, timeout=timeout, shell=False)
     except subprocess.TimeoutExpired:
         raise RuntimeError(f"Higgsfield CLI timed out after {timeout}s")
     except FileNotFoundError:

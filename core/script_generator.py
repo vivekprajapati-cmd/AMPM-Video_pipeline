@@ -424,12 +424,21 @@ Tone: {tone}
 Date: {date_str}
 {source_block}
 Generate a two-character micro-drama script for this news story.
-- Character 1: the human cost — the person living the consequence.
-- Character 2: the systemic layer — the insider who understands the institutional failure.
+- Character 1: the human cost — the person directly affected by the incident.
+- Character 2: the systemic layer — the person who holds institutional responsibility.
 - Both must arrive at the same convergence line from opposite directions.
 - The convergence line is the thesis — one verifiable truth, not an opinion.
 - All dialogue must be written for voice: short sentences, natural pauses, [beat] markers.
 - Text card lines must be pulled directly from the source — exact numbers, names, dates.
+
+CASTING — READ BEFORE WRITING THE SCHEMA:
+Step 1: From the source article, identify who was harmed (occupation, age, gender if stated).
+Step 2: From the source article, identify who held responsibility (role, institution).
+Step 3: Assign char1 and char2 from those facts only.
+BANNED: young woman char1 + middle-aged man char2. This combination is not allowed.
+BANNED: generic "affected woman" or "concerned resident" as char1 if the article doesn't name a woman.
+DEFAULT when gender is unspecified: use two men, two women, or an elderly char1 — not a young woman.
+If you are about to write a young woman as char1 and an older man as char2 without article evidence: STOP. Recast.
 
 {prompts.SCRIPT_JSON_SCHEMA_DRAMA}"""
 
@@ -460,12 +469,8 @@ def _validate_script_drama(data: dict) -> None:
         logger.warning(f"Drama split_screen.convergence_line doesn't match take scripts.")
 
     text_cards = data.get("text_cards", [])
-    if len(text_cards) != 3:
-        raise RuntimeError(f"Drama script must have exactly 3 text_cards, got {len(text_cards)}")
-
-    storyboard = data.get("storyboard", [])
-    if len(storyboard) != 8:
-        raise RuntimeError(f"Drama storyboard must have exactly 8 rows, got {len(storyboard)}")
+    if not (1 <= len(text_cards) <= 2):
+        raise RuntimeError(f"Drama script must have 1 or 2 text_cards, got {len(text_cards)}")
 
     for char_id, char_data in chars.items():
         for field in ("avatar_image_prompt", "voice_prompt", "higgsfield_prompt"):

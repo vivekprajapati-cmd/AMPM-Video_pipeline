@@ -55,6 +55,7 @@ st.markdown("""
     padding: 1rem 1.2rem;
     border-radius: 6px;
     margin-bottom: 1rem;
+    color: #0D0D0B;
   }
   .scene-card.avatar { border-left-color: #AAFF47; }
   .scene-card.cutaway { border-left-color: #0D0D0B; }
@@ -103,25 +104,64 @@ _init_state()
 # ── Header ─────────────────────────────────────────────────────────────────────
 st.markdown('<div class="ampm-header">AM:PM — AI Video Pipeline</div>', unsafe_allow_html=True)
 
+# ── Top nav: Upload existing script ───────────────────────────────────────────
+with st.expander("Upload existing script JSON", expanded=False):
+    uploaded_script = st.file_uploader(
+        "Drop a previously saved drama script JSON",
+        type=["json"],
+        key="script_upload",
+        label_visibility="collapsed",
+    )
+    if uploaded_script is not None and st.session_state.get("_last_upload") != uploaded_script.name:
+        try:
+            raw = uploaded_script.read().decode("utf-8")
+            data = json.loads(raw)
+            if data.get("video_type") != "drama":
+                st.error(f"Expected video_type='drama', got '{data.get('video_type')}'. Only drama scripts are supported here.")
+            else:
+                video_id = data.get("video_id", "uploaded")
+                output_dir = config.OUTPUT_DIR / video_id
+                output_dir.mkdir(parents=True, exist_ok=True)
+                _copy_final_card(output_dir)
+                st.session_state["script_data"]  = data
+                st.session_state["video_id"]     = video_id
+                st.session_state["output_dir"]   = str(output_dir)
+                st.session_state["video_type"]   = "drama"
+                st.session_state["screen"]       = "review"
+                st.session_state["_last_upload"] = uploaded_script.name
+                st.rerun()
+        except json.JSONDecodeError as e:
+            st.error(f"Invalid JSON: {e}")
+        except Exception as e:
+            st.error(f"Failed to load script: {e}")
 
 # ── Sidebar: env check ─────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### LLM Provider")
     provider = st.selectbox(
         "Script generation model",
-        ["groq", "claude"],
+        ["claude", "groq"],
         index=0,
-        format_func=lambda x: "Groq — Llama 3.3 70B (free)" if x == "groq" else "Claude Sonnet (paid)",
+        format_func=lambda x: "Claude Sonnet (default)" if x == "claude" else "Groq — Llama 3.3 70B",
         label_visibility="collapsed",
     )
     st.session_state["llm_provider"] = provider
 
     st.markdown("### Animation Model")
+    _ANIM_OPTIONS = ["grok_video", "kling2_6", "seedance_2_0"]
+    _ANIM_LABELS  = {
+        "grok_video":   "grok-imagine — 14 credits / 9s",
+        "kling2_6":     "Kling 2.6 — 10 credits / 10s",
+        "seedance_2_0": "Seedance 2.0 Fast — 12 credits / 8s",
+    }
+    _cur = st.session_state.get("animation_model", "grok_video")
+    if _cur not in _ANIM_OPTIONS:
+        _cur = "grok_video"
     animation_model = st.selectbox(
         "Animation model",
-        ["grok_video", "kling2_6"],
-        index=["grok_video", "kling2_6"].index(st.session_state.get("animation_model", "grok_video")),
-        format_func=lambda x: "grok-imagine — 14 credits / 9s" if x == "grok_video" else "Kling 2.6 — 10 credits / 10s",
+        _ANIM_OPTIONS,
+        index=_ANIM_OPTIONS.index(_cur),
+        format_func=lambda x: _ANIM_LABELS[x],
         label_visibility="collapsed",
     )
     st.session_state["animation_model"] = animation_model
@@ -176,9 +216,9 @@ with st.sidebar:
             st.markdown("**Resume**")
             anim_model_resume = st.selectbox(
                 "Model for re-animation",
-                ["grok_video", "kling2_6"],
-                index=["grok_video", "kling2_6"].index(st.session_state.get("animation_model", "grok_video")),
-                format_func=lambda x: "grok-imagine — 14cr" if x == "grok_video" else "Kling 2.6 — 10cr",
+                ["grok_video", "kling2_6", "seedance_2_0"],
+                index=["grok_video", "kling2_6", "seedance_2_0"].index(st.session_state.get("animation_model", "grok_video")),
+                format_func=lambda x: {"grok_video": "grok-imagine — 14cr", "kling2_6": "Kling 2.6 — 10cr", "seedance_2_0": "Seedance 2.0 Fast — 12cr"}[x],
                 key="resume_model_select",
                 label_visibility="collapsed",
             )
@@ -744,6 +784,7 @@ def _screen_progress_type2(video_id: str, all_scenes: list[Scene]):
 
     output_dir = Path(st.session_state["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
+    _copy_final_card(output_dir)
     log = st.session_state.get("generation_log", [])
     _anim_model = st.session_state.get("animation_model", "kling2_6")
 
@@ -874,8 +915,177 @@ def _generate_single_char_image(script: dict, char_id: str):
             st.error(f"{char_id} image failed: {e}")
 
 
-def _generate_single_drama_clip(script: dict, char_id: str, take: dict, t_num: int):
-    """Generate a single Seedance clip for one take and show result inline."""
+
+_CARD_ANIM_PROMPT = (
+    "The text already present in the image must remain fully visible and legible throughout the entire video. "
+    "Animate the text with a typewriter reveal effect from left to right — each word or character appears one by one. "
+    "Very subtle slow push-in on the background image, no camera shake. "
+    "Cinematic, calm, deliberate pace. "
+    "Preserve all existing text exactly as shown. Do not add new text, subtitles, logos, watermarks, or UI elements."
+)
+
+
+def _generate_title_card_image(script: dict):
+    """Generate nano_banana_2 image for the title card with hook_line baked into prompt."""
+    from core.higgsfield_cli import generate_image, _extract_url
+    from utils.downloader import download_file
+
+    output_dir = Path(st.session_state.get("output_dir", "output"))
+    cards_dir  = output_dir / "cards"
+    cards_dir.mkdir(parents=True, exist_ok=True)
+
+    tc         = script.get("title_card", {})
+    hook       = tc.get("hook_line", "").strip().upper()
+    base       = tc.get("image_prompt", "").rstrip(". ")
+    img_dest   = cards_dir / "title_card.jpg"
+
+    if not base:
+        st.error("Title card: image_prompt is empty.")
+        return
+
+    text_instruction = (
+        f'The image must prominently display the bold white text "{hook}" centered on screen. '
+        "Large, clean, editorial sans-serif. Pure black background with minimal symbolic element. "
+        "Vertical 9:16 format."
+    ) if hook else ""
+    full_prompt = f"{base}. {text_instruction}".strip() if text_instruction else base
+
+    with st.spinner("Generating title card image..."):
+        try:
+            response = generate_image(full_prompt, aspect_ratio="9:16")
+            cdn_url  = _extract_url(response)
+            download_file(cdn_url, img_dest)
+            st.success("Title card image saved")
+            st.image(str(img_dest), width=200)
+        except Exception as e:
+            st.error(f"Title card image failed: {e}")
+
+
+
+def _build_card_image_prompt(card: dict) -> str:
+    """Build nano_banana_2 prompt that includes the card text visually."""
+    base        = card.get("image_prompt", "").rstrip(". ")
+    overlay     = card.get("overlay_text", "").strip().upper()
+    lines       = card.get("text_lines", card.get("lines", []))
+
+    text_parts = []
+    if overlay:
+        text_parts.append(f'bold headline text "{overlay}"')
+    for line in lines:
+        if line.strip():
+            text_parts.append(f'"{line.strip()}"')
+
+    if text_parts:
+        text_instruction = (
+            "The image must prominently display the following text overlaid on the visual: "
+            + ", ".join(text_parts)
+            + ". Text is clean, large, white, legible, editorial sans-serif style. "
+            "Dark semi-transparent scrim behind text for readability. Vertical 9:16 format."
+        )
+        return f"{base}. {text_instruction}"
+    return base
+
+
+def _generate_card_image_only(script: dict, card_index: int, card_id: int):
+    """Generate nano_banana_2 image for one text card with text baked into prompt."""
+    from core.higgsfield_cli import generate_image, _extract_url
+    from utils.downloader import download_file
+
+    output_dir = Path(st.session_state.get("output_dir", "output"))
+    cards_dir  = output_dir / "cards"
+    cards_dir.mkdir(parents=True, exist_ok=True)
+
+    card       = script.get("text_cards", [])[card_index]
+    img_prompt = _build_card_image_prompt(card)
+    img_dest   = cards_dir / f"textcard_{card_id}.jpg"
+
+    if not card.get("image_prompt", "").strip():
+        st.error(f"Card {card_id}: image_prompt is empty.")
+        return
+
+    with st.spinner(f"Generating card {card_id} image (text included)..."):
+        try:
+            response = generate_image(img_prompt, aspect_ratio="9:16")
+            cdn_url  = _extract_url(response)
+            download_file(cdn_url, img_dest)
+            st.success(f"Card {card_id} image saved")
+            st.image(str(img_dest), width=200)
+        except Exception as e:
+            st.error(f"Card {card_id} image failed: {e}")
+
+
+def _animate_card_only(script: dict, card_index: int, card_id: int):
+    """Animate existing text card image with Seedance 2.0 fast, 4s."""
+    from core.higgsfield_cli import _extract_url
+    from utils.cli_runner import run_higgsfield
+    from utils.downloader import download_file
+
+    output_dir = Path(st.session_state.get("output_dir", "output"))
+    cards_dir  = output_dir / "cards"
+    img_dest   = cards_dir / f"textcard_{card_id}.jpg"
+    mp4_dest   = cards_dir / f"textcard_{card_id}.mp4"
+
+    if not img_dest.exists():
+        st.error(f"Card {card_id}: generate the image first.")
+        return
+
+    card      = script.get("text_cards", [])[card_index]
+    overlay   = card.get("overlay_text", "").strip()
+    lines     = card.get("text_lines", card.get("lines", []))
+    lines_str = " / ".join(l for l in lines if l.strip())
+    text_ref  = f'Header: "{overlay}". ' if overlay else ""
+    text_ref += f'Lines: {lines_str}.' if lines_str else ""
+    full_anim_prompt = f"{_CARD_ANIM_PROMPT} {text_ref}".strip()
+
+    with st.spinner(f"Animating card {card_id} (Seedance 4s, 480p)..."):
+        try:
+            cmd = [
+                "generate", "create", "seedance_2_0",
+                "--prompt", full_anim_prompt,
+                "--image", str(img_dest),
+                "--aspect_ratio", "9:16",
+                "--duration", "4",
+                "--mode", "fast",
+                "--generate_audio", "true",
+                "--resolution", "480p",
+            ]
+            response = run_higgsfield(cmd)
+            cdn_url  = _extract_url(response)
+            download_file(cdn_url, mp4_dest)
+            st.success(f"Card {card_id} done")
+            st.video(mp4_dest.read_bytes())
+        except Exception as e:
+            st.error(f"Card {card_id} animation failed: {e}")
+
+
+def _copy_final_card(output_dir: Path) -> None:
+    """Copy AMPM-FINAL_CARD.mp4 into the output folder if it exists and isn't already there."""
+    import shutil
+    src = config.AMPM_FINAL_CARD
+    dst = output_dir / "AMPM-FINAL_CARD.mp4"
+    if src.exists() and not dst.exists():
+        shutil.copy2(src, dst)
+
+
+def _extract_audio_from_clip(mp4_path: Path) -> Path:
+    """Extract audio track from a clip as .mp3 using ffmpeg. Returns path to audio file."""
+    import subprocess
+    audio_path = mp4_path.with_suffix(".mp3")
+    if audio_path.exists():
+        return audio_path
+    result = subprocess.run(
+        ["ffmpeg", "-y", "-i", str(mp4_path), "-vn", "-acodec", "mp3", str(audio_path)],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg audio extraction failed: {result.stderr.strip()}")
+    return audio_path
+
+
+def _generate_single_drama_clip(script: dict, char_id: str, take: dict, t_num: int, voice_ref: Path = None):
+    """Generate a single Seedance clip for one take and show result inline.
+    voice_ref: path to an mp3 extracted from Take 1 of this character — passed as --audio for voice consistency.
+    """
     import re as _re
     from core.higgsfield_cli import _extract_url
     from utils.cli_runner import run_higgsfield
@@ -889,18 +1099,23 @@ def _generate_single_drama_clip(script: dict, char_id: str, take: dict, t_num: i
     label = f"{char_id}_take{t_num}"
     dest  = clips_dir / f"{label}.mp4"
 
-    chars      = script.get("characters", {})
-    char_data  = chars.get(char_id, {})
+    chars        = script.get("characters", {})
+    char_data    = chars.get(char_id, {})
     base_prompt  = char_data.get("higgsfield_prompt", "")
-    # Strip any fixed shot framing from the character-level prompt so per-take camera_angle wins
     base_prompt  = _re.sub(r"Locked [^.]+\.", "", base_prompt).strip()
     clean_script = _re.sub(r"\[.*?\]", "", take.get("script", "")).strip()
     camera_angle = take.get("camera_angle", "").strip()
-    # camera_angle goes FIRST — Seedance reads shot framing from the top of the prompt
-    full_prompt  = " ".join(filter(None, [camera_angle + "," if camera_angle else "", base_prompt, f"Dialogue: {clean_script}" if clean_script else ""]))
-    duration     = min(int(take.get("duration_seconds", 8)), 8)
+    voice_prompt = char_data.get("voice_prompt", "").strip()
+    voice_block  = f"Voice: {voice_prompt}" if voice_prompt else ""
+    full_prompt  = " ".join(filter(None, [
+        camera_angle + "," if camera_angle else "",
+        base_prompt,
+        voice_block,
+        f"Dialogue: {clean_script}" if clean_script else "",
+    ]))
+    duration = min(int(take.get("duration_seconds", 8)), 8)
 
-    avatar_img = str(images_dir / f"{char_id}_avatar.jpg")
+    avatar_img = images_dir / f"{char_id}_avatar.jpg"
 
     cmd = [
         "generate", "create", "seedance_2_0",
@@ -911,16 +1126,18 @@ def _generate_single_drama_clip(script: dict, char_id: str, take: dict, t_num: i
         "--generate_audio", "true",
         "--resolution", config.HIGGSFIELD_VIDEO_RESOLUTION,
     ]
-    if Path(avatar_img).exists():
-        cmd += ["--image", avatar_img]
+    if avatar_img.exists():
+        cmd += ["--image", str(avatar_img)]
+    if voice_ref and voice_ref.exists():
+        cmd += ["--audio", str(voice_ref)]
 
-    with st.spinner(f"Generating {label}..."):
+    with st.spinner(f"Generating {label}" + (" (voice ref from take 1)" if voice_ref else "") + "..."):
         try:
             response = run_higgsfield(cmd)
             cdn_url  = _extract_url(response)
             download_file(cdn_url, dest)
             st.success(f"{label} done")
-            st.video(str(dest))
+            st.video(dest.read_bytes())
         except Exception as e:
             st.error(f"{label} failed: {e}")
 
@@ -1080,6 +1297,7 @@ def _screen_progress_drama(video_id: str, script: dict):
 
     output_dir = Path(st.session_state["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
+    _copy_final_card(output_dir)
     log = st.session_state.get("generation_log", [])
 
     def log_step(msg, ok=True):
@@ -1144,7 +1362,9 @@ def _screen_progress_drama(video_id: str, script: dict):
         else:
             s1.update(label="Step 1 — Both avatar images done", state="complete")
 
-    # ── Step 2: Generate 5 character clips (Seedance 2.0 — video + voice in one) ──
+    # ── Step 2: Generate character clips (Seedance 2.0 — video + voice in one) ──
+    # Voice ref strategy: after Take 1 of each character succeeds, extract its audio
+    # and pass via --audio to Takes 2 and 3 for voice consistency across clips.
     with st.status(f"Step 2 — Generating {len(all_takes)} character clips (Seedance 2.0)...", expanded=True) as s3:
         prog = st.progress(0)
         try:
@@ -1153,26 +1373,38 @@ def _screen_progress_drama(video_id: str, script: dict):
             from utils.cli_runner import run_higgsfield
             from utils.downloader import download_file
 
+            # Track extracted voice ref per character: {char_id: Path}
+            voice_refs: dict = {}
+
             for i, (char_id, take, label) in enumerate(all_takes):
                 dest = clips_dir / f"{label}.mp4"
                 if dest.exists():
                     take_lipsync_paths[label] = str(dest)
                     log_step(f"{label} already exists — skipping")
+                    # Still try to extract audio ref if this is take 1 and ref not yet set
+                    if take.get("take_number", 1) == 1 and char_id not in voice_refs:
+                        try:
+                            voice_refs[char_id] = _extract_audio_from_clip(dest)
+                            log_step(f"{char_id} voice ref extracted from existing take 1")
+                        except Exception:
+                            pass
                     prog.progress((i + 1) / len(all_takes))
                     continue
 
-                char_data = chars.get(char_id, {})
+                char_data    = chars.get(char_id, {})
                 base_prompt  = char_data.get("higgsfield_prompt", "")
-                # Strip fixed shot framing so per-take camera_angle is the dominant instruction
                 base_prompt  = _re.sub(r"Locked [^.]+\.", "", base_prompt).strip()
                 clean_script = _re.sub(r"\[.*?\]", "", take.get("script", "")).strip()
                 camera_angle = take.get("camera_angle", "").strip()
-                # camera_angle goes FIRST — Seedance reads shot framing from the top of the prompt
-                full_prompt  = " ".join(filter(None, [camera_angle + "," if camera_angle else "", base_prompt, f"Dialogue: {clean_script}" if clean_script else ""]))
-
+                voice_prompt = char_data.get("voice_prompt", "").strip()
+                voice_block  = f"Voice: {voice_prompt}" if voice_prompt else ""
+                full_prompt  = " ".join(filter(None, [
+                    camera_angle + "," if camera_angle else "",
+                    base_prompt,
+                    voice_block,
+                    f"Dialogue: {clean_script}" if clean_script else "",
+                ]))
                 duration = min(int(take.get("duration_seconds", 8)), 8)
-
-                # Avatar image from Step 1 — gives Seedance face/appearance reference
                 avatar_img = char_image_paths.get(char_id, "")
 
                 cmd = [
@@ -1187,12 +1419,26 @@ def _screen_progress_drama(video_id: str, script: dict):
                 if avatar_img and Path(avatar_img).exists():
                     cmd += ["--image", avatar_img]
 
+                # Pass Take 1 audio as voice reference for Takes 2 and 3
+                voice_ref = voice_refs.get(char_id)
+                if voice_ref and voice_ref.exists():
+                    cmd += ["--audio", str(voice_ref)]
+                    log_step(f"{label} using voice ref from take 1")
+
                 try:
                     response = run_higgsfield(cmd)
                     cdn_url = _extract_url(response)
                     download_file(cdn_url, dest)
                     take_lipsync_paths[label] = str(dest)
                     log_step(f"{label} OK -> {dest.name}")
+
+                    # Extract audio from Take 1 for subsequent takes
+                    if take.get("take_number", 1) == 1 and char_id not in voice_refs:
+                        try:
+                            voice_refs[char_id] = _extract_audio_from_clip(dest)
+                            log_step(f"{char_id} voice ref extracted from take 1")
+                        except Exception as ae:
+                            log_step(f"{char_id} voice ref extraction failed: {ae}", ok=False)
                 except Exception as e:
                     log_step(f"{label} failed: {e}", ok=False)
                     st.warning(f"{label} failed: {e}")
@@ -1205,34 +1451,122 @@ def _screen_progress_drama(video_id: str, script: dict):
             s3.update(label=f"Step 2 — FAILED: {e}", state="error")
             st.error(str(e)); _show_log(log); return
 
-    # ── Step 3: Generate text card MP4s ──────────────────────────────────────
+    # ── Step 3a: Title card (image + animation) ──────────────────────────────
+    cards_dir = output_dir / "cards"
+    cards_dir.mkdir(exist_ok=True)
+    tc_data      = script.get("title_card", {})
+    tc_img_dest  = cards_dir / "title_card.jpg"
+    tc_mp4_dest  = cards_dir / "title_card.mp4"
+
+    with st.status("Step 3a — Title card image...", expanded=True) as s_tc:
+        try:
+            from core.higgsfield_cli import generate_image as _gen_img, _extract_url as _ext_url
+            from utils.downloader import download_file as _dl
+
+            if tc_data:
+                if not tc_img_dest.exists():
+                    hook      = tc_data.get("hook_line", "").strip().upper()
+                    base      = tc_data.get("image_prompt", "").rstrip(". ")
+                    text_inst = (
+                        f'The image must prominently display the bold white text "{hook}" centered on screen. '
+                        "Large, clean, editorial sans-serif. Pure black background with minimal symbolic element. "
+                        "Vertical 9:16 format."
+                    ) if hook else ""
+                    full_tc_prompt = f"{base}. {text_inst}".strip() if text_inst else base
+                    resp    = _gen_img(full_tc_prompt, aspect_ratio="9:16")
+                    cdn_url = _ext_url(resp)
+                    _dl(cdn_url, tc_img_dest)
+                    log_step(f"title_card image saved -> {tc_img_dest.name}")
+                else:
+                    log_step("title_card image already exists — skipping")
+
+                s_tc.update(label="Step 3a — Title card image done", state="complete")
+            else:
+                log_step("No title_card in script — skipping", ok=False)
+                s_tc.update(label="Step 3a — No title_card field in script", state="complete")
+        except Exception as e:
+            log_step(f"Title card failed: {e}", ok=False)
+            s_tc.update(label=f"Step 3a — Title card FAILED: {e}", state="error")
+            st.warning(f"Title card failed (non-fatal): {e}")
+
+    # ── Step 3b: Generate text card images + animations ───────────────────────
     text_card_paths = {}
     text_cards = script.get("text_cards", [])
     cards_dir = output_dir / "cards"
     cards_dir.mkdir(exist_ok=True)
 
-    with st.status(f"Step 3 — Generating {len(text_cards)} text card MP4s...", expanded=True) as s4:
+    # Uses module-level _CARD_ANIM_PROMPT — 4s, 480p, typewriter feel
+
+    with st.status(f"Step 3b — Generating {len(text_cards)} text cards (image + animation)...", expanded=True) as s4:
         prog = st.progress(0)
         try:
+            from core.higgsfield_cli import generate_image, _extract_url
+            from utils.cli_runner import run_higgsfield
+            from utils.downloader import download_file
+
+            total_steps = len(text_cards) * 2  # image + animate per card
+
             for i, card in enumerate(text_cards):
-                card_id = card.get("card_id", i + 1)
-                dest = cards_dir / f"textcard_{card_id}.mp4"
+                card_id  = card.get("card_id", i + 1)
+                img_dest = cards_dir / f"textcard_{card_id}.jpg"
+                mp4_dest = cards_dir / f"textcard_{card_id}.mp4"
 
-                if dest.exists():
-                    text_card_paths[f"card_{card_id}"] = str(dest)
-                    log_step(f"textcard_{card_id} already exists — skipping")
-                    prog.progress((i + 1) / len(text_cards))
-                    continue
+                # ── 3a: Generate image with text baked into prompt ───────────
+                if not img_dest.exists():
+                    img_prompt = _build_card_image_prompt(card)
+                    if not card.get("image_prompt", "").strip():
+                        log_step(f"textcard_{card_id} missing image_prompt — skipping", ok=False)
+                        prog.progress((i * 2 + 2) / total_steps)
+                        continue
+                    try:
+                        response = generate_image(img_prompt, aspect_ratio="9:16")
+                        cdn_url  = _extract_url(response)
+                        download_file(cdn_url, img_dest)
+                        log_step(f"textcard_{card_id} image saved -> {img_dest.name}")
+                    except Exception as e:
+                        log_step(f"textcard_{card_id} image failed: {e}", ok=False)
+                        st.warning(f"Card {card_id} image failed: {e}")
+                        prog.progress((i * 2 + 2) / total_steps)
+                        continue
+                else:
+                    log_step(f"textcard_{card_id} image already exists — skipping")
 
-                try:
-                    _render_text_card(card, dest)
-                    text_card_paths[f"card_{card_id}"] = str(dest)
-                    log_step(f"textcard_{card_id} rendered -> {dest.name}")
-                except Exception as e:
-                    log_step(f"textcard_{card_id} failed: {e}", ok=False)
-                    st.warning(f"Text card {card_id} failed: {e}")
+                prog.progress((i * 2 + 1) / total_steps)
 
-                prog.progress((i + 1) / len(text_cards))
+                # ── 3b: Animate with Seedance 2.0 fast, 4s, typewriter prompt ─
+                if not mp4_dest.exists():
+                    try:
+                        overlay   = card.get("overlay_text", "").strip()
+                        lines     = card.get("text_lines", card.get("lines", []))
+                        lines_str = " / ".join(l for l in lines if l.strip())
+                        text_ref  = f'Header: "{overlay}". ' if overlay else ""
+                        text_ref += f'Lines: {lines_str}.' if lines_str else ""
+                        full_anim_prompt = f"{_CARD_ANIM_PROMPT} {text_ref}".strip()
+                        cmd = [
+                            "generate", "create", "seedance_2_0",
+                            "--prompt", full_anim_prompt,
+                            "--image", str(img_dest),
+                            "--aspect_ratio", "9:16",
+                            "--duration", "4",
+                            "--mode", "fast",
+                            "--generate_audio", "true",
+                            "--resolution", config.HIGGSFIELD_VIDEO_RESOLUTION,
+                        ]
+                        response = run_higgsfield(cmd)
+                        cdn_url  = _extract_url(response)
+                        download_file(cdn_url, mp4_dest)
+                        text_card_paths[f"card_{card_id}"] = str(mp4_dest)
+                        log_step(f"textcard_{card_id} animated -> {mp4_dest.name}")
+                    except Exception as e:
+                        log_step(f"textcard_{card_id} animation failed: {e}", ok=False)
+                        st.warning(f"Card {card_id} animation failed: {e}")
+                        # Fall back to static image path so output pack still has something
+                        text_card_paths[f"card_{card_id}"] = str(img_dest)
+                else:
+                    text_card_paths[f"card_{card_id}"] = str(mp4_dest)
+                    log_step(f"textcard_{card_id} mp4 already exists — skipping")
+
+                prog.progress((i * 2 + 2) / total_steps)
 
             s4.update(label=f"Step 3 — Text cards done ({len(text_card_paths)}/{len(text_cards)})", state="complete")
         except Exception as e:
@@ -1285,6 +1619,7 @@ def screen_progress():
 
     output_dir = Path(st.session_state["output_dir"]) if st.session_state.get("output_dir") else config.OUTPUT_DIR / video_id
     output_dir.mkdir(parents=True, exist_ok=True)
+    _copy_final_card(output_dir)
     st.session_state["output_dir"] = str(output_dir)
 
     log = st.session_state.get("generation_log", [])
@@ -1706,6 +2041,10 @@ def screen_reanimate():
 def screen_review_drama():
     script = st.session_state["script_data"]
 
+    if st.button("← Home", key="drama_review_home"):
+        st.session_state["screen"] = "input"
+        st.rerun()
+
     st.markdown(f"## Micro-Drama Script Review — `{script['video_id']}`")
 
     col1, col2 = st.columns(2)
@@ -1796,7 +2135,18 @@ def screen_review_drama():
             )
             script["takes"]["char1"][i]["script"] = new_script
             if st.button(f"Generate this clip", key=f"gen_char1_take{t_num}"):
-                _generate_single_drama_clip(script, "char1", take, t_num)
+                _clips_dir = Path(st.session_state.get("output_dir", "output")) / "clips"
+                _take1_mp4 = _clips_dir / "char1_take1.mp4"
+                _vref = None
+                if t_num > 1:
+                    if _take1_mp4.exists():
+                        try:
+                            _vref = _extract_audio_from_clip(_take1_mp4)
+                        except Exception:
+                            st.warning("Could not extract voice ref from Take 1 — generating without voice consistency.")
+                    else:
+                        st.warning("Take 1 not generated yet — voice consistency won't be maintained. Generate Take 1 first for best results.")
+                _generate_single_drama_clip(script, "char1", take, t_num, voice_ref=_vref)
 
     st.markdown("#### Character 2 — 3 Takes")
     for i, take in enumerate(takes.get("char2", [])):
@@ -1814,7 +2164,18 @@ def screen_review_drama():
             )
             script["takes"]["char2"][i]["script"] = new_script
             if st.button(f"Generate this clip", key=f"gen_char2_take{t_num}"):
-                _generate_single_drama_clip(script, "char2", take, t_num)
+                _clips_dir = Path(st.session_state.get("output_dir", "output")) / "clips"
+                _take1_mp4 = _clips_dir / "char2_take1.mp4"
+                _vref = None
+                if t_num > 1:
+                    if _take1_mp4.exists():
+                        try:
+                            _vref = _extract_audio_from_clip(_take1_mp4)
+                        except Exception:
+                            st.warning("Could not extract voice ref from Take 1 — generating without voice consistency.")
+                    else:
+                        st.warning("Take 1 not generated yet — voice consistency won't be maintained. Generate Take 1 first for best results.")
+                _generate_single_drama_clip(script, "char2", take, t_num, voice_ref=_vref)
 
     st.markdown("---")
 
@@ -1837,6 +2198,34 @@ def screen_review_drama():
 
     st.markdown("---")
 
+    # ── TITLE CARD ────────────────────────────────────────────────────────────
+    st.markdown("### Title Card")
+    tc = script.get("title_card", {})
+    if tc:
+        with st.expander(f"Title Card | 0:00–0:04 (4s) — hook line", expanded=False):
+            new_hook = st.text_input("Hook line", value=tc.get("hook_line", ""), key="title_card_hook")
+            script["title_card"]["hook_line"] = new_hook
+
+            new_tc_prompt = st.text_area(
+                "Image prompt (nano_banana_2)",
+                value=tc.get("image_prompt", ""),
+                key="title_card_imgprompt",
+                height=80,
+            )
+            script["title_card"]["image_prompt"] = new_tc_prompt
+
+            existing_img = Path(st.session_state.get("output_dir", "output")) / "cards" / "title_card.jpg"
+
+            if existing_img.exists():
+                st.image(str(existing_img), width=150, caption="Title card image")
+
+            if st.button("Generate image", key="gen_title_img"):
+                _generate_title_card_image(script)
+    else:
+        st.warning("No title_card in script. Regenerate script to get this field.")
+
+    st.markdown("---")
+
     # ── TEXT CARDS ────────────────────────────────────────────────────────────
     st.markdown("### Text Cards")
     text_cards = script.get("text_cards", [])
@@ -1844,21 +2233,46 @@ def screen_review_drama():
         card_id = int(card.get("card_id", ci + 1))
         t_start = card.get("timecode_start", "")
         t_end = card.get("timecode_end", "")
-        is_final = (card_id == 3)
-        label = f"Card {card_id}  |  {t_start}–{t_end}" + (" — FINAL CARD (logo + CTA)" if is_final else "")
-        with st.expander(label, expanded=(not is_final)):
-            st.caption(f"Animation: {card.get('animation', '')} | Style: {card.get('style', '')}")
-            lines = card.get("lines", [])
+        dur = card.get("duration_seconds", "")
+        purpose = card.get("purpose", "")
+        label = f"Card {card_id}  |  {t_start}–{t_end}  ({dur}s)  —  {purpose}"
+        with st.expander(label, expanded=True):
+            # Text lines
+            lines = card.get("text_lines", card.get("lines", []))
             new_lines = []
             for i, line in enumerate(lines):
-                new_line = st.text_input(
-                    f"Line {i + 1}",
-                    value=line,
-                    key=f"card{card_id}_line{i}",
-                    disabled=is_final,
-                )
-                new_lines.append(new_line if not is_final else line)
-            script["text_cards"][ci]["lines"] = new_lines
+                new_line = st.text_input(f"Line {i + 1}", value=line, key=f"card{card_id}_line{i}")
+                new_lines.append(new_line)
+            script["text_cards"][ci]["text_lines"] = new_lines
+
+            # Overlay text
+            new_overlay = st.text_input(
+                "Overlay text (header)",
+                value=card.get("overlay_text", ""),
+                key=f"card{card_id}_overlay",
+            )
+            script["text_cards"][ci]["overlay_text"] = new_overlay
+
+            # Image prompt
+            new_img_prompt = st.text_area(
+                "Image prompt (nano_banana_2)",
+                value=card.get("image_prompt", ""),
+                key=f"card{card_id}_imgprompt",
+                height=100,
+            )
+            script["text_cards"][ci]["image_prompt"] = new_img_prompt
+
+            # Show existing image or generate button
+            existing_img = Path(st.session_state.get("output_dir", "output")) / "cards" / f"textcard_{card_id}.jpg"
+            if existing_img.exists():
+                st.image(str(existing_img), width=200, caption=f"Card {card_id} — current")
+            btn_col1, btn_col2 = st.columns(2)
+            with btn_col1:
+                if st.button("Generate image", key=f"gen_card_img_{card_id}"):
+                    _generate_card_image_only(script, ci, card_id)
+            with btn_col2:
+                if st.button("Animate (Seedance 4s)", key=f"animate_card_{card_id}"):
+                    _animate_card_only(script, ci, card_id)
 
     st.markdown("---")
 
