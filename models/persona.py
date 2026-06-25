@@ -136,9 +136,12 @@ PERSONA_BANK: Dict[str, Persona] = {
 }
 
 BEAT_TO_PERSONA = {
-    "Finance": "FIN-F-01",
-    "Politics": "POL-F-01",
-    "Business": "BIZ-M-01",
-    "Culture": "POP-F-01",
+    "Finance":        "FIN-F-01",
+    "Politics":       "POL-F-01",
+    "Business":       "BIZ-M-01",
+    "Culture":        "POP-F-01",
     "Global Affairs": "GLO-F-01",
+    "Crime/Tragedy":  "POL-F-01",  # serious, measured tone
+    "Science/Tech":   "BIZ-M-01",  # informed, curious energy
+    "Health":         "FIN-F-01",  # analytical, data-accessible
 }

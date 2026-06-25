@@ -72,8 +72,10 @@ Visual style guide for {beat} beat:
 Animation style guide for {beat} beat:
 {animation_style}
 {source_block}
-Generate a 6-scene production script. Apply the story arc and visual rules from your instructions.
-Scenes 1 and 4 = AVATAR. Scenes 2, 3, 5, 6 = CUTAWAY.
+Generate a 5-scene production script WITH text_cards. Total video = exactly 60 seconds.
+Budget breakdown: 5 scenes × 10s = 50s + 2 text cards × 4s = 8s + 2s padding = 60s total. DO NOT exceed this.
+Scenes 1 and 3 = AVATAR. Scenes 2, 4, 5 = CUTAWAY.
+text_cards: MANDATORY — exactly 2 cards. Injected after scene 2 and after scene 4 in the timeline. Each card has 2 text_lines (MAX 4 WORDS each), overlay_text, and image_prompt.
 
 {prompts.SCRIPT_JSON_SCHEMA}"""
 
@@ -117,6 +119,66 @@ def _call_groq(system_prompt: str, user_message: str) -> str:
             logger.warning(f"Groq limit on {model} ({type(e).__name__}) — switching to fallback ({config.GROQ_FALLBACK_MODEL})...")
         except Exception:
             raise
+
+
+def _call_openrouter(system_prompt: str, user_message: str, model: str = None) -> str:
+    if not config.OPENROUTER_API_KEY:
+        raise RuntimeError("OPENROUTER_API_KEY not set in .env")
+    import httpx
+
+    primary = model or config.OPENROUTER_QWEN_MODEL
+    # Auto-fallback chain: if primary is rate-limited, try next in sequence
+    fallback_chain = [primary, config.OPENROUTER_DEEPSEEK_MODEL, config.OPENROUTER_NEMOTRON_MODEL]
+    seen, models_to_try = set(), []
+    for m in fallback_chain:
+        if m not in seen:
+            seen.add(m)
+            models_to_try.append(m)
+
+    last_error = None
+    for m in models_to_try:
+        logger.info(f"Calling OpenRouter ({m})...")
+        response = httpx.post(
+            f"{config.OPENROUTER_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {config.OPENROUTER_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": m,
+                "max_tokens": 6000,
+                "include_reasoning": False,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_message},
+                ],
+            },
+            timeout=300,
+        )
+        if response.status_code in (429, 524, 503):
+            logger.warning(f"OpenRouter {m} unavailable ({response.status_code}) — trying next model...")
+            last_error = f"{m} returned {response.status_code}"
+            continue
+        if response.status_code != 200:
+            raise RuntimeError(f"OpenRouter error {response.status_code}: {response.text[:300]}")
+
+        data = response.json()
+        logger.debug(f"OpenRouter response keys: {list(data.keys())}")
+        if "choices" in data and data["choices"]:
+            content = data["choices"][0]["message"].get("content") or ""
+            if not content.strip():
+                content = data["choices"][0]["message"].get("reasoning_content", "")
+            if content.strip():
+                return content.strip()
+            last_error = f"{m} returned empty content"
+            logger.warning(f"{last_error} — trying next model...")
+            continue
+        if "content" in data and data["content"]:
+            return data["content"].strip()
+        last_error = f"{m} returned unexpected structure: {str(data)[:150]}"
+        logger.warning(f"{last_error} — trying next model...")
+
+    raise RuntimeError(f"All OpenRouter models failed. Last: {last_error}")
 
 
 def summarize_article(text: str, provider: str = "groq") -> str:
@@ -184,10 +246,18 @@ Article:
                     logger.warning(f"Limit on {model} — switching to fallback ({config.GROQ_FALLBACK_MODEL})...")
             if summary is None:
                 return text
-        else:
-            if not config.ANTHROPIC_API_KEY:
-                logger.warning("ANTHROPIC_API_KEY not set — skipping summarization, using raw text.")
-                return text
+        elif config.GROQ_API_KEY:
+            # OpenRouter or Claude selected — use Groq for summarization (fast, cheap, same quality)
+            from groq import Groq
+            client = Groq(api_key=config.GROQ_API_KEY)
+            logger.info(f"Summarizing article ({len(text)} chars) via groq ({config.GROQ_SUMMARIZE_MODEL})...")
+            response = client.chat.completions.create(
+                model=config.GROQ_SUMMARIZE_MODEL,
+                max_tokens=900,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            )
+            summary = response.choices[0].message.content.strip()
+        elif config.ANTHROPIC_API_KEY:
             client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
             response = client.messages.create(
                 model=config.CLAUDE_MODEL,
@@ -196,6 +266,9 @@ Article:
                 messages=[{"role": "user", "content": user}],
             )
             summary = response.content[0].text.strip()
+        else:
+            logger.warning("No API key available for summarization — using raw text.")
+            return text
 
         logger.info(f"Summary generated — {len(summary)} chars.")
         return summary
@@ -203,6 +276,80 @@ Article:
     except Exception as e:
         logger.warning(f"Summarization failed: {e} — falling back to raw text.")
         return text
+
+
+def detect_beat_and_tone(text: str, provider: str = "groq") -> dict:
+    """
+    Given article text or summary, returns {"beat": "...", "tone": "..."}.
+    Falls back to {"beat": "Politics", "tone": "Serious"} on failure.
+    """
+    BEATS = ["Finance", "Business", "Politics", "Culture", "Global Affairs", "Crime/Tragedy", "Science/Tech", "Health"]
+    TONES = ["Calm", "Energetic", "Serious", "Casual"]
+
+    beat_definitions = (
+        "Finance = stock markets, RBI, interest rates, economy, GDP, inflation, budgets, taxes.\n"
+        "Business = startups, funding rounds, IPOs, companies, entrepreneurship, corporate strategy.\n"
+        "Politics = government policy, elections, political parties, parliament, governance, civic failures, law enforcement failures.\n"
+        "Culture = social media, internet trends, entertainment, celebrities, Gen Z lifestyle, sports.\n"
+        "Global Affairs = international diplomacy, geopolitics, cross-border conflict, foreign policy, trade wars.\n"
+        "Crime/Tragedy = fires, accidents, deaths, natural disasters, crimes, civic safety failures, emergency response failures.\n"
+        "Science/Tech = AI, technology products, space, scientific research, medical discoveries, environment.\n"
+        "Health = public health, disease outbreaks, mental health, healthcare systems, nutrition, fitness."
+    )
+
+    system = "You are a news categorization engine. Return only valid JSON, no markdown, no commentary."
+    user = f"""Classify this news article into exactly one beat and one tone.
+
+Beat definitions:
+{beat_definitions}
+
+Tone options: Calm | Energetic | Serious | Casual
+Tone = the emotional register most appropriate for a short-form video about this story.
+
+Return exactly this JSON:
+{{"beat": "<one of the 8 beat options>", "tone": "<one of the 4 tone options>"}}
+
+Article:
+---
+{text[:2000]}
+---"""
+
+    try:
+        import json as _json
+        raw = ""
+        _use_groq = provider != "claude" and config.GROQ_API_KEY
+        if _use_groq:
+            from groq import Groq
+            client = Groq(api_key=config.GROQ_API_KEY)
+            response = client.chat.completions.create(
+                model=config.GROQ_FALLBACK_MODEL,  # 17B — beat detection, fast + cheap
+                max_tokens=60,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            )
+            raw = response.choices[0].message.content.strip()
+        elif config.ANTHROPIC_API_KEY:
+            client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY)
+            response = client.messages.create(
+                model=config.CLAUDE_MODEL,
+                max_tokens=60,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+            raw = response.content[0].text.strip()
+
+        result = _json.loads(raw)
+        beat = result.get("beat", "Politics")
+        tone = result.get("tone", "Serious")
+        if beat not in BEATS:
+            beat = "Politics"
+        if tone not in TONES:
+            tone = "Serious"
+        logger.info(f"Auto-detected beat={beat}, tone={tone}")
+        return {"beat": beat, "tone": tone}
+
+    except Exception as e:
+        logger.warning(f"Beat/tone detection failed: {e} — using defaults.")
+        return {"beat": "Politics", "tone": "Serious"}
 
 
 def generate_script(
@@ -235,12 +382,27 @@ def generate_script(
 
     if provider == "claude":
         raw = _call_claude(system_prompt, user_message)
+    elif provider == "openrouter_deepseek":
+        raw = _call_openrouter(system_prompt, user_message, model=config.OPENROUTER_DEEPSEEK_MODEL)
+    elif provider == "openrouter_nemotron":
+        raw = _call_openrouter(system_prompt, user_message, model=config.OPENROUTER_NEMOTRON_MODEL)
+    elif provider == "openrouter_llama70b":
+        raw = _call_openrouter(system_prompt, user_message, model="meta-llama/llama-3.3-70b-instruct")
     else:
         raw = _call_groq(system_prompt, user_message)
 
     # Strip markdown fences either model might add
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
+
+    # Reasoning models (e.g. Nemotron) may output chain-of-thought before the JSON.
+    # Find the first { or [ and trim everything before it.
+    first_brace = min(
+        (raw.find("{") if raw.find("{") != -1 else len(raw)),
+        (raw.find("[") if raw.find("[") != -1 else len(raw)),
+    )
+    if first_brace > 0:
+        raw = raw[first_brace:]
 
     # Replace literal control characters inside JSON string values.
     # LLMs sometimes emit real newlines/tabs inside strings instead of \n/\t,
@@ -278,8 +440,26 @@ def generate_script(
             f"{provider} returned invalid JSON. Raw output:\n{raw}\n\nError: {e}"
         )
 
+    # Strip reasoning artifacts that leak into string fields (e.g. "Wait, let me count...")
+    _REASONING_RE = re.compile(
+        r'\s*(Wait[,.]|Let me count[^.]*\.|[A-Z]-[a-z]-[a-z]-|Count:|Counting:|'
+        r'Let me re|Actually,\s+let|Hmm,|Let me verify|Re-counting|Step \d+:|'
+        r'[A-Za-z]-[A-Za-z]-[A-Za-z]-[A-Za-z]).*',
+        re.DOTALL
+    )
+    def _clean_reasoning(obj):
+        if isinstance(obj, str):
+            return _REASONING_RE.sub("", obj).strip()
+        if isinstance(obj, dict):
+            return {k: _clean_reasoning(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [_clean_reasoning(i) for i in obj]
+        return obj
+    data = _clean_reasoning(data)
+
     if video_type == "type2":
         _validate_script_type2(data)
+        data = _expand_type2_avatar_narrations(data, provider)
         data["video_type"] = "type2"
     elif video_type == "drama":
         _validate_script_drama(data)
@@ -332,8 +512,11 @@ Date: {date_str}
 {source_block}
 Generate a 14-scene split-screen video script:
 - Scenes 1–2: AVATAR (30 seconds each, EXACTLY 450 characters narration)
-- Scenes 3–14: CUTAWAY (5 seconds each, silent, image_prompt + animation_prompt only)
-Cutaways 3–8 reinforce avatar scene 1. Cutaways 9–14 reinforce avatar scene 2.
+- Scenes 3–7: CUTAWAY (5 seconds each, silent) — reinforce avatar scene 1
+- Scene 8: TEXT_CARD (4 seconds) — mid-video fact drop with 2 text_lines
+- Scenes 9–13: CUTAWAY (5 seconds each, silent) — reinforce avatar scene 2
+- Scene 14: TEXT_CARD (4 seconds) — closing implication card with 2 text_lines
+Total: 10 cutaways + 2 text cards = 12 non-avatar scenes.
 
 {prompts.SCRIPT_JSON_SCHEMA_TYPE2}"""
 
@@ -345,11 +528,11 @@ def _validate_script(data: dict) -> None:
         raise RuntimeError(f"Claude script missing keys: {missing}")
 
     scenes = data["scenes"]
-    if len(scenes) != 6:
-        raise RuntimeError(f"Expected 6 scenes, got {len(scenes)}")
+    if len(scenes) != 5:
+        raise RuntimeError(f"Expected 5 scenes, got {len(scenes)}")
 
     for i, s in enumerate(scenes):
-        expected_type = "AVATAR" if i in (0, 3) else "CUTAWAY"
+        expected_type = "AVATAR" if i in (0, 2) else "CUTAWAY"
         if s.get("type") != expected_type:
             raise RuntimeError(
                 f"Scene {i+1} should be {expected_type} but got {s.get('type')}"
@@ -368,6 +551,12 @@ def _validate_script(data: dict) -> None:
                 f"exceeds 150-char target, audio may be cut."
             )
 
+    text_cards = data.get("text_cards", [])
+    if not text_cards:
+        logger.warning("Type1 script missing text_cards — LLM did not generate them.")
+    elif not (1 <= len(text_cards) <= 2):
+        logger.warning(f"Type1 script has {len(text_cards)} text_cards — expected 1-2.")
+
 
 def _validate_script_type2(data: dict) -> None:
     required_keys = {"video_id", "persona", "template", "angle", "scenes"}
@@ -379,23 +568,54 @@ def _validate_script_type2(data: dict) -> None:
     if len(scenes) != 14:
         raise RuntimeError(f"Type2 expected 14 scenes, got {len(scenes)}")
 
+    # Expected layout: AVATAR(1,2) CUTAWAY(3-7) TEXT_CARD(8) CUTAWAY(9-13) TEXT_CARD(14)
     for i, s in enumerate(scenes):
-        expected_type = "AVATAR" if i < 2 else "CUTAWAY"
-        if s.get("type") != expected_type:
-            raise RuntimeError(f"Type2 scene {i+1} should be {expected_type}, got {s.get('type')}")
+        snum = i + 1
+        if snum in (1, 2):
+            expected = "AVATAR"
+        elif snum == 8 or snum == 14:
+            expected = "TEXT_CARD"
+        else:
+            expected = "CUTAWAY"
 
-        if expected_type == "AVATAR":
+        actual = s.get("type")
+        if actual != expected:
+            logger.warning(f"Type2 scene {snum} expected {expected}, got {actual} — correcting.")
+            s["type"] = expected
+
+        if expected == "AVATAR":
             narration = s.get("narration", "")
             cc = len(narration)
             if cc < 400:
-                logger.warning(f"Type2 avatar scene {i+1} narration is {cc} chars — target 450.")
+                logger.warning(f"Type2 avatar scene {snum} narration is {cc} chars — target 450.")
             elif cc > 500:
-                logger.warning(f"Type2 avatar scene {i+1} narration is {cc} chars — may run long.")
-        else:
+                logger.warning(f"Type2 avatar scene {snum} narration is {cc} chars — may run long.")
+        elif expected == "CUTAWAY":
             if not s.get("image_prompt"):
-                logger.warning(f"Type2 cutaway scene {i+1} missing image_prompt.")
+                logger.warning(f"Type2 cutaway scene {snum} missing image_prompt.")
             if not s.get("animation_prompt"):
-                logger.warning(f"Type2 cutaway scene {i+1} missing animation_prompt.")
+                logger.warning(f"Type2 cutaway scene {snum} missing animation_prompt.")
+        elif expected == "TEXT_CARD":
+            if not s.get("text_lines"):
+                logger.warning(f"Type2 text card scene {snum} missing text_lines.")
+            if not s.get("image_prompt"):
+                logger.warning(f"Type2 text card scene {snum} missing image_prompt.")
+
+    # Extract TEXT_CARD scenes into data["text_cards"] for backwards-compatible pipeline processing
+    tc_scenes = [s for s in scenes if s.get("type") == "TEXT_CARD"]
+    data["text_cards"] = [
+        {
+            "card_id": i + 1,
+            "purpose": "mid-video fact drop" if i == 0 else "closing implication",
+            "text_lines": s.get("text_lines", []),
+            "overlay_text": s.get("overlay_text", ""),
+            "duration_seconds": s.get("duration_seconds", 4),
+            "image_prompt": s.get("image_prompt", ""),
+        }
+        for i, s in enumerate(tc_scenes)
+    ]
+    if not data["text_cards"]:
+        logger.warning("Type2 script has no TEXT_CARD scenes — text cards will be skipped.")
 
 
 def _build_user_message_drama(
@@ -478,6 +698,51 @@ def _validate_script_drama(data: dict) -> None:
                 logger.warning(f"Drama {char_id} missing field: {field}")
 
     logger.info("Drama script validation passed.")
+
+
+def _expand_type2_avatar_narrations(data: dict, provider: str) -> dict:
+    """Auto-expands Type 2 AVATAR narrations that are under 430 chars to hit the 430-450 target."""
+    scenes = data.get("scenes", [])
+    avatar_scenes = [s for s in scenes if s.get("type") == "AVATAR" and len(s.get("narration", "")) < 430]
+    if not avatar_scenes:
+        return data
+
+    logger.info(f"Auto-expanding {len(avatar_scenes)} Type 2 AVATAR narration(s) to 430-450 chars...")
+    for s in scenes:
+        if s.get("type") != "AVATAR":
+            continue
+        cc = len(s.get("narration", ""))
+        if cc >= 430:
+            continue
+        original = s["narration"]
+        system = (
+            "You are a video script editor. Rewrite the narration to be between 430 and 450 characters "
+            "including spaces. Preserve all facts, names, and numbers. Add context, consequence, or "
+            "detail to reach the target length — no filler. Return only the rewritten narration. "
+            "No quotes, no labels, no explanation."
+        )
+        user = (
+            f"Rewrite this 30-second AVATAR narration to be between 430 and 450 characters including spaces.\n"
+            f"Keep all facts intact. Expand with relevant detail to hit the target.\n\n"
+            f"Current narration ({cc} chars):\n{original}\n\n"
+            f"Return only the rewritten narration."
+        )
+        try:
+            from groq import Groq
+            client = Groq(api_key=config.GROQ_API_KEY)
+            resp = client.chat.completions.create(
+                model=config.GROQ_MODEL,
+                max_tokens=200,
+                messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+            )
+            expanded = resp.choices[0].message.content.strip()
+            new_cc = len(expanded)
+            logger.info(f"  Scene {s['scene_number']} AVATAR: {cc} → {new_cc} chars")
+            s["narration"] = expanded
+        except Exception as e:
+            logger.warning(f"Type 2 narration expansion failed for scene {s['scene_number']}: {e} — keeping original.")
+
+    return data
 
 
 def _expand_narration(narration: str, scene_type: str, provider: str) -> str:

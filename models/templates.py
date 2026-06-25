@@ -85,9 +85,12 @@ STORY_TEMPLATES: Dict[str, StoryTemplate] = {
 }
 
 BEAT_TO_TEMPLATE = {
-    "Finance": "TEMPLATE_A",
-    "Politics": "TEMPLATE_E",
-    "Business": "TEMPLATE_A",
-    "Culture": "TEMPLATE_D",
+    "Finance":        "TEMPLATE_A",
+    "Politics":       "TEMPLATE_E",
+    "Business":       "TEMPLATE_A",
+    "Culture":        "TEMPLATE_D",
     "Global Affairs": "TEMPLATE_C",
+    "Crime/Tragedy":  "TEMPLATE_C",  # timeline/crisis: what happened → trigger → now → impact
+    "Science/Tech":   "TEMPLATE_A",  # explainer: hook → what → why it matters → pattern → data → takeaway
+    "Health":         "TEMPLATE_A",  # explainer: hook → what → why it matters → pattern → data → takeaway
 }

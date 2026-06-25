@@ -10,6 +10,7 @@ ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY", "")
 HEYGEN_API_KEY = os.getenv("HEYGEN_API_KEY", "")
 JINA_API_KEY = os.getenv("JINA_API_KEY", "")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")
 
 # ── ElevenLabs voice IDs — one per persona ────────────────────────────────────
 # Get voice IDs from elevenlabs.io/voice-library
@@ -60,6 +61,9 @@ CLAUDE_MODEL = "claude-sonnet-4-6"
 GROQ_MODEL = "llama-3.3-70b-versatile"          # script generation — primary
 GROQ_SUMMARIZE_MODEL = "llama-3.1-8b-instant"   # article summarization — pure extraction, separate TPD quota
 GROQ_FALLBACK_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct"  # fallback when primary hits TPD limit
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+OPENROUTER_DEEPSEEK_MODEL = "openai/gpt-oss-120b:free"
+OPENROUTER_NEMOTRON_MODEL = "nvidia/nemotron-3-super-120b-a12b:free"
 ELEVENLABS_MODEL = "eleven_multilingual_v2"
 
 # ── ElevenLabs voice settings ─────────────────────────────────────────────────
@@ -112,6 +116,7 @@ def check_env() -> dict[str, bool]:
     return {
         "claude": bool(ANTHROPIC_API_KEY.strip()),
         "groq": bool(GROQ_API_KEY.strip()),
+        "openrouter": bool(OPENROUTER_API_KEY.strip()),
         "elevenlabs": bool(ELEVENLABS_API_KEY.strip() and (ELEVENLABS_VOICE_DEFAULT.strip() or any(v.strip() for v in ELEVENLABS_VOICE_MAP.values()))),
         "heygen": bool(HEYGEN_API_KEY.strip()),
         "heygen_avatar": bool(HEYGEN_AVATAR_IMG_DEFAULT.strip() or any(v.strip() for v in HEYGEN_AVATAR_IMG_MAP.values())),

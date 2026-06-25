@@ -117,8 +117,19 @@ FACTUAL RULES
 - Political and financial topics must use neutral, factual framing in narration.
 - Factual specificity in narration NEVER justifies specific terms in image_prompt — they are separate rules.
 
+TEXT CARDS (MANDATORY — every script must include exactly 2)
+Text cards are standalone visual cards that appear between scenes — editorial graphics with text overlaid on a nano_banana_2 illustration.
+- Card 1: mid-video fact drop — hardest numbers, names, dates from the source. Placed after scene 3.
+- Card 2: closing implication — what is at stake or what happens next. Placed after scene 6.
+- Each card has exactly 2 text_lines. Each line is MAX 4 WORDS. Total across both lines MAX 8 WORDS.
+- overlay_text: 3-4 word visual header for the card.
+- image_prompt: nano_banana_2 editorial illustration depicting the concept of the card. No text, no UI.
+- Text must be completable by a slow typewriter animation in 4 seconds. COUNT WORDS. Any line over 4 words WILL be cut off.
+- Pull text_lines directly from source material — no invented data.
+
 OUTPUT
-Return only valid JSON. No markdown. No commentary. No preamble.
+Return ONLY valid JSON. No markdown. No commentary. No preamble. No reasoning traces.
+CRITICAL: Every string field must contain only the final output text. Do NOT embed word counting, self-correction, drafting notes, "Wait,", "Let me count", character tallies, or revision thoughts inside any JSON string value.
 """.strip()
 
 
@@ -156,25 +167,51 @@ Schema:
       "animation_prompt": "<camera motion only — slow zoom, parallax, pan direction, depth shift. Zero subject description. Zero political/geographic/brand terms.>",
       "overlay_text": "<short text for manual overlay — max 6 words>"
     }
-    // scenes 3 (CUTAWAY), 4 (AVATAR), 5 (CUTAWAY), 6 (CUTAWAY) follow the same pattern
+    // scenes 3 (AVATAR), 4 (CUTAWAY), 5 (CUTAWAY) follow the same pattern — 5 scenes total
+  ],
+
+  "text_cards": [
+    {
+      "card_id": 1,
+      "purpose": "mid-video fact drop — hard numbers, named entities, key data from the story",
+      "text_lines": [
+        "<MAX 4 WORDS — hard fact: number, name, or date from source>",
+        "<MAX 4 WORDS — hard fact: number, name, or date from source>"
+      ],
+      "overlay_text": "<3-4 words max — visual header>",
+      "duration_seconds": 4,
+      "image_prompt": "<nano_banana_2 editorial illustration depicting the factual concept of this card. Specific, story-relevant. No text, no captions, no UI.>"
+    },
+    {
+      "card_id": 2,
+      "purpose": "closing implication — what is at stake, what comes next",
+      "text_lines": [
+        "<MAX 4 WORDS — closing implication, specific>",
+        "<MAX 4 WORDS — closing implication, specific>"
+      ],
+      "overlay_text": "<3-4 words max — visual header>",
+      "duration_seconds": 4,
+      "image_prompt": "<nano_banana_2 editorial illustration depicting the forward-looking concept. Specific, not generic. No text, no UI.>"
+    }
   ]
 }
 
 HARD RULES:
+- TOTAL VIDEO = 60 SECONDS. 5 scenes × 10s = 50s + 2 text cards × 4s = 8s + 2s padding = 60s. Do not add more scenes.
 - scenes[0] type MUST be "AVATAR" (scene_number 1)
 - scenes[1] type MUST be "CUTAWAY" (scene_number 2)
-- scenes[2] type MUST be "CUTAWAY" (scene_number 3)
-- scenes[3] type MUST be "AVATAR" (scene_number 4)
+- scenes[2] type MUST be "AVATAR" (scene_number 3)
+- scenes[3] type MUST be "CUTAWAY" (scene_number 4)
 - scenes[4] type MUST be "CUTAWAY" (scene_number 5)
-- scenes[5] type MUST be "CUTAWAY" (scene_number 6)
 - animation_prompt is null for AVATAR scenes only
 - overlay_text is null for AVATAR scenes only
 - Every narration MUST be EXACTLY 150 characters including spaces. COUNT CHARACTERS. No exceptions.
-- scene_description is REQUIRED for all 6 scenes — never null, never empty.
+- scene_description is REQUIRED for all 5 scenes — never null, never empty.
 - scene_description must be unique per scene — no two scenes share the same visual concept.
 - scene_description must be NSFW-safe — strip only: party names, politician names, country names, explicit hardware (weapons, missiles, guns, bombs, tanks). All other terms allowed — conflict, tension, ceasefire, escalation, forces, strikes, restraint, standoff, pressure, military action, fragile — use them if the narration calls for it.
 - image_prompt must be derived from scene_description — SUBJECT comes from scene_description, not invented independently.
 - Every image_prompt MUST end with: No captions, no subtitles, no text overlay, no logos, no watermark, no UI.
+- text_cards MUST have exactly 2 entries. Each entry requires: card_id, text_lines (EXACTLY 2 lines, MAX 4 WORDS each), overlay_text (3-4 words), duration_seconds (4), image_prompt.
 """.strip()
 
 
@@ -196,7 +233,7 @@ Clips 7–12 (infographics) run while the avatar speaks the second 30 seconds.
 
 AVATAR NARRATION RULES
 - 2 AVATAR scenes, 30 seconds each.
-- Each narration must be EXACTLY 450 characters including spaces — this is 30 seconds of speech.
+- Each narration must be between 430 and 450 characters including spaces — this is 30 seconds of speech. Minimum 430. Do not go under.
 - Together they tell the full story: setup + context → insight + consequence.
 - Maximum information density: exact numbers, named entities, concrete comparisons.
 - Write for voice: natural rhythm, conversational, Gen Z but credible.
@@ -218,7 +255,8 @@ FACTUAL RULES
 - Do not invent statistics, names, or outcomes not in the source.
 
 OUTPUT
-Return only valid JSON. No markdown. No commentary.
+Return ONLY valid JSON. No markdown. No commentary. No preamble. No reasoning traces.
+CRITICAL: Every string field must contain only the final output text. Do NOT embed word counting, self-correction, drafting notes, "Wait,", "Let me count", character tallies, or revision thoughts inside any JSON string value.
 """.strip()
 
 
@@ -238,55 +276,91 @@ Schema:
       "scene_number": 1,
       "type": "AVATAR",
       "duration_seconds": 30,
-      "narration": "<EXACTLY 450 characters including spaces — full first half of the story. Specific numbers, named entities, stakes. Count before finalizing.>",
+      "narration": "<430-450 characters including spaces — full first half of the story. Specific numbers, named entities, stakes. Minimum 430, maximum 450. Count before finalizing.>",
       "scene_description": null,
       "image_prompt": null,
       "animation_prompt": null,
-      "overlay_text": null
+      "overlay_text": null,
+      "text_lines": null
     },
     {
       "scene_number": 2,
       "type": "AVATAR",
       "duration_seconds": 30,
-      "narration": "<EXACTLY 450 characters including spaces — second half: insight, implication, consequence. Specific. Count before finalizing.>",
+      "narration": "<430-450 characters including spaces — second half: insight, implication, consequence. Specific. Minimum 430, maximum 450. Count before finalizing.>",
       "scene_description": null,
       "image_prompt": null,
       "animation_prompt": null,
-      "overlay_text": null
+      "overlay_text": null,
+      "text_lines": null
     },
     {
       "scene_number": 3,
       "type": "CUTAWAY",
       "duration_seconds": 5,
       "narration": "",
-      "scene_description": "<One sentence: what specific visual from the avatar narration does this reinforce? Concrete subject, story-specific.>",
-      "image_prompt": "<Follow this exact format: 'A painterly editorial illustration of [SPECIFIC SUBJECT FROM STORY], with [SPECIFIC PROPS/DETAILS THAT REINFORCE THE NARRATIVE], No captions, no subtitles, no text overlay, no logos, no watermark, no UI.' — Alternate between 'painterly editorial illustration' and 'stylized, semi-realistic illustration' across scenes. Props must be story-specific (e.g. magnifying glass on a document, envelope with a stamp, calendar with circled date, books with relevant titles). Stylized semi-realistic figures with expressive faces and body language are encouraged. No identifiable real people.>",
-      "animation_prompt": "<Camera motion only — slow push in, subtle parallax, slow zoom in, or camera pan. No morphing. No transformation. No new elements. Subject holds form throughout.>",
-      "overlay_text": null
+      "scene_description": "<One sentence: what specific visual from the avatar 1 narration does this reinforce?>",
+      "image_prompt": "<Painterly editorial illustration of [SPECIFIC SUBJECT FROM STORY], with [STORY-SPECIFIC PROPS]. No captions, no subtitles, no text overlay, no logos, no watermark, no UI.>",
+      "animation_prompt": "<Camera motion only — slow push in, subtle parallax, slow zoom in, or camera pan. No morphing. No new elements.>",
+      "overlay_text": null,
+      "text_lines": null
+    },
+    // scenes 4–7: CUTAWAY (scene_numbers 4–7), visual reinforcement of avatar scene 1 narration
+    {
+      "scene_number": 8,
+      "type": "TEXT_CARD",
+      "duration_seconds": 4,
+      "narration": "",
+      "scene_description": null,
+      "image_prompt": "<nano_banana_2 editorial illustration depicting the factual concept of this card. Specific, story-relevant. No text, no captions, no UI.>",
+      "animation_prompt": null,
+      "overlay_text": "<3-4 words max — visual header>",
+      "text_lines": [
+        "<MAX 4 WORDS — hard fact: number, name, or date from source>",
+        "<MAX 4 WORDS — hard fact: number, name, or date from source>"
+      ]
+    },
+    // scenes 9–13: CUTAWAY (scene_numbers 9–13), visual reinforcement of avatar scene 2 narration
+    {
+      "scene_number": 14,
+      "type": "TEXT_CARD",
+      "duration_seconds": 4,
+      "narration": "",
+      "scene_description": null,
+      "image_prompt": "<nano_banana_2 editorial illustration depicting the forward-looking concept of this closing card. Specific. No text, no captions, no UI.>",
+      "animation_prompt": null,
+      "overlay_text": "<3-4 words max — visual header>",
+      "text_lines": [
+        "<MAX 4 WORDS — closing implication, specific>",
+        "<MAX 4 WORDS — closing implication, specific>"
+      ]
     }
-    // scenes 4–8: CUTAWAY, visual reinforcement of avatar scene 1 narration
-    // scenes 9–14: CUTAWAY, visual reinforcement of avatar scene 2 narration
   ]
 }
 
 IMAGE PROMPT RULES — follow exactly:
-- Format: "A painterly editorial illustration of [SUBJECT], with [PROPS/DETAILS], No captions, no subtitles, no text overlay, no logos, no watermark, no UI."
-- Alternate between "painterly editorial illustration" and "stylized, semi-realistic illustration" across the 12 cutaways.
+- CUTAWAY format: "A painterly editorial illustration of [SUBJECT], with [PROPS/DETAILS], No captions, no subtitles, no text overlay, no logos, no watermark, no UI."
+- Alternate between "painterly editorial illustration" and "stylized, semi-realistic illustration" across the 10 cutaways.
 - SUBJECT must be story-specific — pulled directly from the avatar narration. No generic shapes or abstract concepts.
-- PROPS must reinforce the story: a magnifying glass on a document, a calendar with a circled date, books with relevant titles, a file with an envelope and stamp, a thought bubble, a voting booth, etc.
+- PROPS must reinforce the story: a magnifying glass on a document, a calendar with a circled date, books with relevant titles, etc.
 - Stylized semi-realistic figures with expressive faces and body language encouraged. No identifiable real people.
 - Each cutaway must be visually unique — no two scenes share the same concept or composition.
 
 HARD RULES:
 - scenes[0] type MUST be "AVATAR" (scene_number 1, duration 30)
 - scenes[1] type MUST be "AVATAR" (scene_number 2, duration 30)
-- scenes[2]–scenes[13] type MUST be "CUTAWAY" (scene_numbers 3–14, duration 5)
+- scenes[2]–scenes[6]: type MUST be "CUTAWAY" (scene_numbers 3–7, duration 5) — reinforce avatar 1
+- scenes[7]: type MUST be "TEXT_CARD" (scene_number 8, duration 4) — mid-video fact drop
+- scenes[8]–scenes[12]: type MUST be "CUTAWAY" (scene_numbers 9–13, duration 5) — reinforce avatar 2
+- scenes[13]: type MUST be "TEXT_CARD" (scene_number 14, duration 4) — closing card
 - Total scenes: EXACTLY 14.
-- AVATAR narration MUST be EXACTLY 450 characters. COUNT CHARACTERS.
+- AVATAR narration MUST be between 430 and 450 characters. Minimum 430. COUNT CHARACTERS.
 - CUTAWAY narration MUST be empty string "".
+- TEXT_CARD narration MUST be empty string "".
 - scene_description and image_prompt MUST be null for AVATAR scenes.
-- scene_description and image_prompt are REQUIRED for all CUTAWAY scenes.
-- animation_prompt is REQUIRED for all CUTAWAY scenes.
+- scene_description and image_prompt are REQUIRED for CUTAWAY scenes.
+- text_lines (2 lines) and overlay_text and image_prompt are REQUIRED for TEXT_CARD scenes.
+- animation_prompt MUST be null for TEXT_CARD scenes (typewriter animation is applied automatically).
 """.strip()
 
 
@@ -394,7 +468,7 @@ TEXT CARD RULES
 - Each card is a VISUAL SCENE — not plain black with text. It is a nano_banana_2 editorial illustration with text overlaid on top.
 - Duration: 4-5 seconds each. No longer.
 - The image_prompt for each card must be a nano_banana_2 prompt depicting the factual concept the card communicates — specific, editorial, story-relevant. Same style rules as character cutaway prompts.
-- text_lines: 2-3 lines max. Hard, specific, factual. No interpretation. Numbers, names, dates from the source.
+- text_lines: EXACTLY 2 lines. Each line MAX 4 WORDS. Total across both lines MAX 8 WORDS. Hard, specific, factual — numbers, names, dates from source. A slow typewriter at 4 seconds can reveal exactly 8 words. Any more and text gets cut off. Count words before finalizing.
 - TEXT CARD 1 sits between char1 opening and char1 main take — hard facts from the article, what happened and when.
 - TEXT CARD 2 (optional) sits after the split screen — forward implication, what's at stake, what comes next.
 - overlay_text: short label for the card, max 5 words, used as a visual header.
@@ -452,7 +526,8 @@ NEGATIVE PROMPT (applied to both avatar lipsync generations)
 captions, subtitles, text overlay, lower-third, Chinese text, English text, random text, fake letters, logos, watermark, UI graphics, banner, ticker, title card, scrolling text, exaggerated gestures, overacting, dramatic facial expression, camera shake, zoom, face distortion, morphing, identity drift, unnatural blinking, stiff robotic face, tears, crying
 
 OUTPUT
-Return only valid JSON. No markdown. No commentary. No preamble.
+Return ONLY valid JSON. No markdown. No commentary. No preamble. No reasoning traces.
+CRITICAL: Every string field must contain only the final output text. Do NOT embed word counting, self-correction, drafting notes, "Wait,", "Let me count", character tallies, or revision thoughts inside any JSON string value.
 """.strip()
 
 
@@ -466,7 +541,7 @@ Schema:
   "video_type": "drama",
   "format": "Two-Character Micro-Drama",
   "template": "Contrast (Human Cost ↔ Systemic Failure → Convergence)",
-  "beat": "<Finance|Business|Politics|Culture|GlobalAffairs>",
+  "beat": "<Finance|Business|Politics|Culture|Global Affairs|Crime/Tragedy|Science/Tech|Health>",
   "story_topic": "<one sentence — the factual story this drama is based on>",
   "angle": "<one sentence — the real truth beneath the headline>",
   "duration_seconds": 60,
@@ -524,9 +599,9 @@ Schema:
       {
         "take_number": 3,
         "timecode_start": "0:38",
-        "timecode_end": "0:46",
-        "duration_seconds": 8,
-        "purpose": "split screen left — char1 line then convergence. MAX 8s = 7-9 words total.",
+        "timecode_end": "0:44",
+        "duration_seconds": 6,
+        "purpose": "split screen left — char1 line then convergence. MAX 6s = 7-9 words total.",
         "camera_angle": "<different shot from takes 1 and 2 — e.g. close-up, frontal, slightly high angle>",
         "script": "<char1 solo line — 3-4 words>\\n[pause 0.5s]\\n<convergence line — must exactly match char2 take 3 convergence line, 4-5 words>"
       }
@@ -553,9 +628,9 @@ Schema:
       {
         "take_number": 3,
         "timecode_start": "0:38",
-        "timecode_end": "0:46",
-        "duration_seconds": 8,
-        "purpose": "split screen right — char2 line then convergence. MAX 8s = 7-9 words total.",
+        "timecode_end": "0:44",
+        "duration_seconds": 6,
+        "purpose": "split screen right — char2 line then convergence. MAX 6s = 7-9 words total.",
         "camera_angle": "<different shot from takes 1 and 2 — e.g. tight close-up, slight left lean, eye-level>",
         "script": "<char2 solo line — 3-4 words>\\n[pause 0.5s]\\n<convergence line — must exactly match char1 take 3 convergence line, 4-5 words>"
       }
@@ -570,10 +645,10 @@ Schema:
       "duration_seconds": 5,
       "purpose": "hard facts — what happened, when, how many",
       "text_lines": [
-        "<hard fact line 1 — number, name, date from source>",
-        "<hard fact line 2 — number, name, date from source>"
+        "<MAX 4 WORDS — hard fact: number, name, or date from source>",
+        "<MAX 4 WORDS — hard fact: number, name, or date from source>"
       ],
-      "overlay_text": "<5 words max — visual header for the card>",
+      "overlay_text": "<3-4 words max — visual header>",
       "image_prompt": "<nano_banana_2 editorial illustration depicting the factual concept of this card. Specific scene — not generic. Same style rules as cutaway image prompts. No text, no captions, no UI.>"
     },
     {
@@ -583,10 +658,10 @@ Schema:
       "duration_seconds": 4,
       "purpose": "forward implication — what is at stake, what comes next",
       "text_lines": [
-        "<implication line 1 — what happens next>",
-        "<implication line 2 — who is affected, what could change>"
+        "<MAX 4 WORDS — closing implication, specific>",
+        "<MAX 4 WORDS — closing implication, specific>"
       ],
-      "overlay_text": "<5 words max — visual header>",
+      "overlay_text": "<3-4 words max — visual header>",
       "image_prompt": "<nano_banana_2 editorial illustration depicting the forward-looking concept. Specific, not generic. No text, no UI.>"
     }
   ],
@@ -744,6 +819,60 @@ PALETTE: Deep olive (#3D4A2E) to near-black background. Dark slate primary forms
 
 NEGATIVE (end every prompt with this exact block): No text, no map labels, no country names, no city names, no flag patterns, no political symbols, no readable labels, no captions, no subtitles, no logos, no watermarks, no UI, no identifiable faces, no weapons, no military hardware.
 """.strip(),
+
+    "Crime/Tragedy": """
+Bold editorial illustration style. Apply all five variables to every image_prompt. Command syntax — no filler.
+
+CRITICAL — NSFW FIREWALL: NEVER include in image_prompt: any victim's name, any real location name, any graphic gore, body horror, explicit injury, blood, or death imagery. Everything else — fire, collapse, emergency response, grief, loss, structural failure, neglect, trapped figures — is allowed and encouraged.
+
+STYLE DIRECTIVE (open every prompt with this): Dark raw editorial illustration. Semi-realistic cinematic render. Heavy contrast, ash and ember tones, crushing shadows, heavy atmosphere. Human weight over spectacle. Not flat vector. Not cartoon. Grief over drama.
+
+SUBJECT: What does the narration describe? Illustrate it directly — a structure collapsing inward (entrapment), smoke rising from a fracturing form (fire), emergency figures silhouetted against orange light (response failure), a lone grieving figure in negative space (loss), a chaotic tangle of forms representing systems failing people. Anonymous figures only — stylized semi-realistic silhouettes, non-identifiable, posture carries all emotion. One dominant moment of human consequence.
+
+COMPOSITION: 9:16 vertical frame. Heavy anchored composition — weight in lower two-thirds. Upper portion atmospheric (smoke, light, void). Lower third clear for overlay. Compressed, suffocating framing that communicates no escape.
+
+ACTION: Derive from the narration — collapse inward, smoke rising upward, figures frozen in shock, emergency forms rushing into frame. The illustration communicates the moment of consequence, not action-movie spectacle.
+
+PALETTE: Ash grey (#6B7280) to near-black background. Deep charcoal (#1F2937) primary forms. Single ember orange (#EA580C) accent on the critical element — fire, alarm, the failure point. Muted, grief-weighted aesthetic. No electric vibrancy.
+
+NEGATIVE (end every prompt with this exact block): No text, no readable labels, no gore, no visible injury, no blood, no identifiable faces, no real location details, no captions, no subtitles, no logos, no watermarks, no UI, no sensationalist imagery.
+""".strip(),
+
+    "Science/Tech": """
+Bold editorial illustration style. Apply all five variables to every image_prompt. Command syntax — no filler.
+
+CRITICAL — NSFW FIREWALL: NEVER include in image_prompt: any company name, any product name, any brand mark, any real scientist or executive name. Everything else — AI, neural networks, space, discovery, research, computation, biology, physics — is allowed and encouraged.
+
+STYLE DIRECTIVE (open every prompt with this): Precise futuristic editorial illustration. Semi-realistic cinematic render. Clean geometry, electric light, volumetric depth. Scientific precision over sci-fi spectacle. Not flat vector. Not cartoon.
+
+SUBJECT: What does the narration describe? Illustrate it directly — a neural network as a glowing web of interconnected nodes, a rocket trajectory as a clean arc cutting through atmospheric layers, a DNA helix as a luminous twisting column, a chip architecture as stacked geometric precision, a climate model as radiating heat-mapped surface, a quantum state as a superimposed overlapping form. Minimal human figures — only where essential to scale. Technical forms carry the story.
+
+COMPOSITION: 9:16 vertical frame. Central precision — subject anchored center frame with clean negative space. Technical elements suggest depth through layers and grids. Lower third clear for overlay. Exact, purposeful, nothing decorative.
+
+ACTION: Derive from the narration — what is being discovered, built, or broken? Illustrate the moment: a node firing in a network, a trajectory launching, a structure revealing itself, a breakthrough as form resolving from chaos to clarity.
+
+PALETTE: Electric blue (#3B82F6) primary accent on the key technical element. Deep space black (#050A14) background. Cool white (#F8FAFC) secondary geometry. Single cyan (#06B6D4) highlight. Cold, precise, intelligent aesthetic.
+
+NEGATIVE (end every prompt with this exact block): No text, no brand logos, no screen UI, no readable labels, no company names, no captions, no subtitles, no watermarks, no identifiable faces, no product mockups.
+""".strip(),
+
+    "Health": """
+Bold editorial illustration style. Apply all five variables to every image_prompt. Command syntax — no filler.
+
+CRITICAL — NSFW FIREWALL: NEVER include in image_prompt: any hospital name, any drug brand name, any identifiable patient, any explicit medical gore or surgical imagery. Everything else — public health, disease spread, healthcare access, mental health, medical research, nutrition, fitness, systems — is allowed and encouraged.
+
+STYLE DIRECTIVE (open every prompt with this): Clean clinical editorial illustration. Semi-realistic cinematic render. Precise forms, medical visual language, human warmth over cold sterility. Accessible science aesthetic. Not flat vector. Not cartoon.
+
+SUBJECT: What does the narration describe? Illustrate it directly — a virus spread as an expanding network of connected nodes (no gore), a healthcare access gap as two forms diverging in scale, a medical breakthrough as a molecular structure resolving into clarity, mental health as a figure emerging from heavy shadow into light, a public health wave as radiating concentric forms over a population silhouette, a nutrition concept as color-coded stacked forms. Anonymous figures only — posture and scale carry the human dimension.
+
+COMPOSITION: 9:16 vertical frame. Clean open composition — subject centered with breathing room. Medical precision in geometry. Lower third clear for overlay. Accessible, not intimidating framing.
+
+ACTION: Derive from the narration — spread expanding, access widening or narrowing, treatment as forms stabilizing, outbreak as rapid cascade. The illustration communicates the human scale of the health event.
+
+PALETTE: Teal (#0D9488) as primary accent on the key health element. Clean white (#FFFFFF) or light cream (#F0EDE5) background. Cool grey (#94A3B8) secondary forms. Single warm amber (#F59E0B) on the human element. Clean, clinical but warm.
+
+NEGATIVE (end every prompt with this exact block): No text, no readable medical labels, no gore, no surgical imagery, no identifiable patients, no brand marks, no captions, no subtitles, no logos, no watermarks, no UI.
+""".strip(),
 }
 
 
@@ -777,15 +906,33 @@ BEAT_ANIMATION_STYLE = {
         "measured heavy movement that builds unease. Dark and deliberate. "
         "No camera shake. No morphing. No transformation. No new elements. Subject holds form throughout."
     ),
+    "Crime/Tragedy": (
+        "Very slow creeping push in, heavy and suffocating movement, grief-weighted pace. "
+        "Atmospheric depth shift — background fades darker as camera moves forward. "
+        "No camera shake. No morphing. No transformation. No new elements. Subject holds form throughout."
+    ),
+    "Science/Tech": (
+        "Precise controlled push in toward the central technical element, subtle parallax on geometric layers, "
+        "clean linear movement, forward momentum of discovery. "
+        "No camera shake. No morphing. No new elements. Subject holds form throughout."
+    ),
+    "Health": (
+        "Gentle slow push in, soft depth-of-field shift toward the key element, "
+        "calm measured movement that communicates care and precision. "
+        "No camera shake. No morphing. No transformation. No new elements. Subject holds form throughout."
+    ),
 }
 
 # Seedance 2.0 genre param per beat — shapes the AI-generated audio track
 BEAT_SEEDANCE_GENRE = {
-    "Finance":       "noir",
-    "Business":      "epic",
-    "Politics":      "drama",
-    "Culture":       "action",
+    "Finance":        "noir",
+    "Business":       "epic",
+    "Politics":       "drama",
+    "Culture":        "action",
     "Global Affairs": "drama",
+    "Crime/Tragedy":  "drama",
+    "Science/Tech":   "epic",
+    "Health":         "calm",
 }
 
 
@@ -824,5 +971,24 @@ BEAT_NARRATION_TONE = {
         "Geographic and historical context expected. "
         "Measured pace. Longer sentences OK for complexity. But always resolve to clarity. "
         "Never sensationalist."
+    ),
+    "Crime/Tragedy": (
+        "Restrained and human. Never sensationalist. Never exploitative. "
+        "Focus on the system failure or human consequence — not the spectacle. "
+        "Slow, deliberate pace. Every word carries weight. "
+        "Name the people when appropriate. Name the failure when known. "
+        "No emotional manipulation — let the facts carry the gravity."
+    ),
+    "Science/Tech": (
+        "Curious and precise. Make the technical accessible without dumbing it down. "
+        "Use analogies to make scale and complexity real. Forward-looking energy. "
+        "Short declarative sentences for key claims. Slightly faster rhythm. "
+        "Credible but not academic — sounds like someone who read the paper AND knows why it matters."
+    ),
+    "Health": (
+        "Calm, clear, and reassuring without being dismissive. Data-driven but human. "
+        "Avoid alarmism — frame risk with context. Avoid false comfort — acknowledge what's real. "
+        "Moderate pace. Accessible language — no medical jargon without immediate plain-language follow. "
+        "Sounds like a trusted doctor friend, not a press release."
     ),
 }

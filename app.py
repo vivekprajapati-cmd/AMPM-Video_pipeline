@@ -69,6 +69,7 @@ st.markdown("""
   }
   .tag-avatar { background: #AAFF47; color: #0D0D0B; }
   .tag-cutaway { background: #0D0D0B; color: #AAFF47; }
+  .tag-textcard { background: #F0EDE5; color: #0D0D0B; border: 1px solid #0D0D0B; }
   .status-ok { color: #22c55e; font-weight: 600; }
   .status-warn { color: #f59e0b; font-weight: 600; }
   .status-err { color: #ef4444; font-weight: 600; }
@@ -138,11 +139,18 @@ with st.expander("Upload existing script JSON", expanded=False):
 # ── Sidebar: env check ─────────────────────────────────────────────────────────
 with st.sidebar:
     st.markdown("### LLM Provider")
+    _provider_labels = {
+        "claude":                 "Claude Sonnet (default)",
+        "groq":                   "Groq — Llama 3.3 70B",
+        "openrouter_deepseek":    "GPT-OSS 120B — free (OpenRouter)",
+        "openrouter_nemotron":    "NVIDIA Nemotron 3 Super 120B — free (OpenRouter)",
+        "openrouter_llama70b":    "Llama 3.3 70B (OpenRouter)",
+    }
     provider = st.selectbox(
         "Script generation model",
-        ["claude", "groq"],
+        list(_provider_labels.keys()),
         index=0,
-        format_func=lambda x: "Claude Sonnet (default)" if x == "claude" else "Groq — Llama 3.3 70B",
+        format_func=lambda x: _provider_labels[x],
         label_visibility="collapsed",
     )
     st.session_state["llm_provider"] = provider
@@ -167,9 +175,10 @@ with st.sidebar:
     st.session_state["animation_model"] = animation_model
 
     env = config.check_env()
-    for key, label in {"groq": "Groq API", "claude": "Claude API"}.items():
+    _active_base = provider.split("_")[0] if provider.startswith("openrouter") else provider
+    for key, label in {"groq": "Groq API", "claude": "Claude API", "openrouter": "OpenRouter"}.items():
         ok = env[key]
-        active = (key == provider)
+        active = provider == key or (key == "openrouter" and provider.startswith("openrouter"))
         if ok:
             icon = "status-ok"
             dot = "Connected" + (" — active" if active else "")
@@ -255,7 +264,7 @@ def screen_input():
         _vt_options,
         format_func=lambda x: {
             "type1":  "Type 1 — Standard (2 avatar + 4 cutaway, 60s)",
-            "type2":  "Type 2 — Split-screen (2 avatar 30s + 12 cutaway 5s, 4:3 infographics)",
+            "type2":  "Type 2 — Split-screen (2 avatar 30s + 10 cutaway 5s + 2 text cards 4s, 4:3)",
             "drama":  "Type 3 — Micro-Drama (2 characters, dialogue, split screen, 60s)",
         }[x],
         horizontal=True,
@@ -279,12 +288,23 @@ def screen_input():
         )
 
     with col2:
+        _beats = ["Finance", "Business", "Politics", "Culture", "Global Affairs", "Crime/Tragedy", "Science/Tech", "Health"]
+        _auto_beat = st.session_state.get("auto_beat", "Politics")
         beat = st.selectbox(
             "Beat",
-            ["Finance", "Business", "Politics", "Culture", "Global Affairs"],
+            _beats,
+            index=_beats.index(_auto_beat) if _auto_beat in _beats else 2,
+            help="Auto-selected from article" if st.session_state.get("auto_beat") else None,
         )
         language = st.selectbox("Language", ["Hinglish", "English", "Hindi"])
-        tone = st.selectbox("Tone", ["Calm", "Energetic", "Serious", "Casual"])
+        _tones = ["Calm", "Energetic", "Serious", "Casual"]
+        _auto_tone = st.session_state.get("auto_tone", "Serious")
+        tone = st.selectbox(
+            "Tone",
+            _tones,
+            index=_tones.index(_auto_tone) if _auto_tone in _tones else 2,
+            help="Auto-selected from article" if st.session_state.get("auto_tone") else None,
+        )
 
     col3, col4 = st.columns([1, 1])
     with col3:
@@ -502,6 +522,11 @@ def screen_input():
                         _provider = st.session_state.get("llm_provider", "groq")
                         summary = summarize_article(raw_article, provider=_provider)
                         st.session_state["news_content_edit"] = summary
+                        # Auto-detect beat and tone from the summarized article
+                        from core.script_generator import detect_beat_and_tone
+                        detected = detect_beat_and_tone(summary, provider=_provider)
+                        st.session_state["auto_beat"] = detected["beat"]
+                        st.session_state["auto_tone"] = detected["tone"]
                         st.session_state["fetch_status"] = "ok"
                     except Exception as e:
                         # Summarization failed — fall back to raw cleaned text, still usable
@@ -530,6 +555,22 @@ def screen_input():
         height=200,
         placeholder="Paste article text here, or use Fetch above...",
     )
+
+    if news_text and news_text.strip():
+        _detect_col, _ = st.columns([1, 3])
+        with _detect_col:
+            if st.button("Auto-detect beat & tone", key="detect_beat_tone"):
+                with st.spinner("Detecting beat and tone..."):
+                    try:
+                        from core.script_generator import detect_beat_and_tone
+                        _provider = st.session_state.get("llm_provider", "groq")
+                        detected = detect_beat_and_tone(news_text.strip(), provider=_provider)
+                        st.session_state["auto_beat"] = detected["beat"]
+                        st.session_state["auto_tone"] = detected["tone"]
+                        st.success(f"Beat: {detected['beat']} — Tone: {detected['tone']}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Detection failed: {e}")
 
     st.markdown("---")
 
@@ -613,6 +654,10 @@ def screen_review():
     scenes: list[Scene] = st.session_state["scenes"]
     is_type2 = (video_type == "type2")
 
+    if st.button("← Back to input", key="review_back"):
+        st.session_state["screen"] = "input"
+        st.rerun()
+
     st.markdown(f"## Script Review — `{script['video_id']}`")
 
     col1, col2, col3 = st.columns(3)
@@ -629,19 +674,21 @@ def screen_review():
     with col3:
         st.markdown(f"**Angle:** {script['angle']}")
         if is_type2:
-            st.caption("Type 2 — 2 avatar (30s) + 12 cutaway (5s, 4:3, silent)")
+            st.caption("Type 2 — 2 avatar (30s) + 10 cutaway (5s, 4:3, silent) + 2 text cards (4s)")
 
     st.markdown("---")
     if is_type2:
-        st.markdown("### Scenes — 2 avatar narrations + 12 infographic prompts")
+        st.markdown("### Scenes — 2 avatar narrations + 10 infographic prompts")
         st.caption("Avatar scenes: edit narration (target 450 chars). Cutaway scenes: edit image + animation prompts only.")
     else:
         st.markdown("### Scenes — edit narration or prompts before generating")
 
+    t1_text_cards = script.get("text_cards", []) if not is_type2 else []
+
     updated_scenes = []
     for scene in scenes:
-        tag_class = "avatar" if scene.type == "AVATAR" else "cutaway"
-        tag_label = "AVATAR" if scene.type == "AVATAR" else "CUTAWAY"
+        tag_class = "avatar" if scene.type == "AVATAR" else ("textcard" if scene.type == "TEXT_CARD" else "cutaway")
+        tag_label = scene.type  # AVATAR / CUTAWAY / TEXT_CARD
 
         with st.expander(
             f"Scene {scene.scene_number} — {tag_label}  |  ~{scene.duration_seconds}s",
@@ -652,9 +699,28 @@ def screen_review():
                 unsafe_allow_html=True,
             )
 
-            if is_type2:
+            if scene.type == "TEXT_CARD":
+                # Inline text card editor — used by Type 2 (TEXT_CARD scenes in scenes array)
+                card_data = next(
+                    (c for c in script.get("text_cards", []) if int(c.get("card_id", 0)) == (1 if scene.scene_number == 8 else 2)),
+                    {}
+                )
+                ci = 0 if scene.scene_number == 8 else 1
+                lines = card_data.get("text_lines", [])
+                new_lines = []
+                for i, line in enumerate(lines):
+                    new_line = st.text_input(f"Line {i+1} (max 4 words)", value=line, key=f"tc_s{scene.scene_number}_line{i}")
+                    new_lines.append(new_line)
+                new_overlay = st.text_input("Overlay header (3-4 words)", value=card_data.get("overlay_text", ""), key=f"tc_s{scene.scene_number}_overlay")
+                new_img = st.text_area("Image prompt (nano_banana_2)", value=card_data.get("image_prompt", scene.image_prompt or ""), key=f"tc_s{scene.scene_number}_img", height=90)
+                if script.get("text_cards") and ci < len(script["text_cards"]):
+                    script["text_cards"][ci]["text_lines"] = new_lines
+                    script["text_cards"][ci]["overlay_text"] = new_overlay
+                    script["text_cards"][ci]["image_prompt"] = new_img
+                scene.image_prompt = new_img
+
+            elif is_type2:
                 if scene.type == "AVATAR":
-                    # Type 2 AVATAR — narration only. No image, no animation (HeyGen handles it).
                     char_count = len(scene.narration)
                     new_narration = st.text_area(
                         f"Narration ({char_count} chars — target 450)",
@@ -662,13 +728,12 @@ def screen_review():
                         key=f"narr_{scene.scene_number}",
                         height=120,
                     )
-                    if char_count < 400:
+                    if char_count < 430:
                         st.warning(f"{char_count} chars — under target. May run short on 30s clip.")
                     elif char_count > 500:
                         st.warning(f"{char_count} chars — over 500. Audio may get cut.")
                     scene.narration = new_narration
                 else:
-                    # Type 2 CUTAWAY — scene description + image + animation. No narration (silent).
                     new_scene_desc = st.text_area(
                         "Scene description (visual concept)",
                         value=scene.scene_description or "",
@@ -732,7 +797,32 @@ def screen_review():
 
             updated_scenes.append(scene)
 
+        # Type 1 — inject text cards inline after scene 2 (card 1) and scene 4 (card 2)
+        if not is_type2 and t1_text_cards:
+            inject_after = {2: 0, 4: 1}
+            ci = inject_after.get(scene.scene_number)
+            if ci is not None and ci < len(t1_text_cards):
+                card = t1_text_cards[ci]
+                card_id = int(card.get("card_id", ci + 1))
+                purpose = card.get("purpose", f"Card {card_id}")
+                with st.expander(f"TEXT CARD {card_id} — {purpose}  |  4s", expanded=True):
+                    st.markdown('<span class="tag tag-textcard">TEXT CARD</span>', unsafe_allow_html=True)
+                    lines = card.get("text_lines", [])
+                    new_lines = []
+                    for i, line in enumerate(lines):
+                        new_line = st.text_input(f"Line {i+1} (max 4 words)", value=line, key=f"t1_card{card_id}_line{i}")
+                        new_lines.append(new_line)
+                    new_overlay = st.text_input("Overlay header (3-4 words)", value=card.get("overlay_text", ""), key=f"t1_card{card_id}_overlay")
+                    new_img = st.text_area("Image prompt (nano_banana_2)", value=card.get("image_prompt", ""), key=f"t1_card{card_id}_img", height=90)
+                    script["text_cards"][ci]["text_lines"] = new_lines
+                    script["text_cards"][ci]["overlay_text"] = new_overlay
+                    script["text_cards"][ci]["image_prompt"] = new_img
+
     st.session_state["scenes"] = updated_scenes
+    if not is_type2:
+        st.session_state["script_data"] = script
+
+    st.session_state["script_data"] = script
 
     st.markdown("---")
     col_back, col_fwd = st.columns([1, 3])
@@ -780,7 +870,7 @@ def _screen_progress_type2(video_id: str, all_scenes: list[Scene]):
     - Step 4: Animate 12 CUTAWAY scenes (5s, kling2_6)
     - No audio merge — cutaways are silent
     """
-    st.caption("Split-screen pipeline — 2 avatar clips (30s) + 12 silent infographic clips (5s, 4:3).")
+    st.caption("Split-screen pipeline — 2 avatar clips (30s) + 10 infographic clips (5s, 4:3) + 2 text cards (4s).")
 
     output_dir = Path(st.session_state["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -880,12 +970,101 @@ def _screen_progress_type2(video_id: str, all_scenes: list[Scene]):
             s4.update(label=f"Step 4 — FAILED: {e}", state="error")
             st.error(str(e)); _show_log(log); return
 
+    # ── Step 5: Text cards ────────────────────────────────────────────────────
+    _run_text_card_pipeline(st.session_state["script_data"], output_dir, log, step_label="Step 5")
+
     final_scenes = sorted(avatar_scenes + cutaway_scenes, key=lambda s: s.scene_number)
     _save_edit_timeline(final_scenes, output_dir, st.session_state["script_data"])
     st.session_state["final_scenes"] = final_scenes
     st.session_state["screen"] = "output"
     st.success("All steps complete.")
     st.rerun()
+
+
+def _run_text_card_pipeline(script: dict, output_dir: Path, log: list, step_label: str = "Text cards"):
+    """Generate image + Seedance animation for all text_cards in the script. Shared across type1, type2, drama."""
+    from core.higgsfield_cli import generate_image, _extract_url
+    from utils.cli_runner import run_higgsfield
+    from utils.downloader import download_file
+
+    text_cards = script.get("text_cards", [])
+    if not text_cards:
+        return
+
+    cards_dir = output_dir / "cards"
+    cards_dir.mkdir(exist_ok=True)
+    total_steps = len(text_cards) * 2
+
+    def log_step(msg, ok=True):
+        log.append(f"[{'OK' if ok else 'FAIL'}] {msg}")
+
+    with st.status(f"{step_label} — Generating {len(text_cards)} text cards (image + animation)...", expanded=True) as s_tc:
+        prog = st.progress(0)
+        done_count = 0
+        try:
+            for i, card in enumerate(text_cards):
+                card_id  = card.get("card_id", i + 1)
+                img_dest = cards_dir / f"textcard_{card_id}.jpg"
+                mp4_dest = cards_dir / f"textcard_{card_id}.mp4"
+
+                # Image
+                if not img_dest.exists():
+                    img_prompt = _build_card_image_prompt(card)
+                    if not card.get("image_prompt", "").strip():
+                        log_step(f"textcard_{card_id} missing image_prompt — skipping", ok=False)
+                        prog.progress((i * 2 + 2) / total_steps)
+                        continue
+                    try:
+                        resp    = generate_image(img_prompt, aspect_ratio="9:16")
+                        cdn_url = _extract_url(resp)
+                        download_file(cdn_url, img_dest)
+                        log_step(f"textcard_{card_id} image saved")
+                    except Exception as e:
+                        log_step(f"textcard_{card_id} image failed: {e}", ok=False)
+                        st.warning(f"Card {card_id} image failed: {e}")
+                        prog.progress((i * 2 + 2) / total_steps)
+                        continue
+                else:
+                    log_step(f"textcard_{card_id} image already exists — skipping")
+                done_count += 1
+                prog.progress((i * 2 + 1) / total_steps)
+
+                # Animation
+                if not mp4_dest.exists():
+                    overlay   = card.get("overlay_text", "").strip()
+                    lines     = card.get("text_lines", card.get("lines", []))
+                    lines_str = " / ".join(l for l in lines if l.strip())
+                    text_ref  = f'Header: "{overlay}". ' if overlay else ""
+                    text_ref += f'Lines: {lines_str}.' if lines_str else ""
+                    full_anim_prompt = f"{_CARD_ANIM_PROMPT} {text_ref}".strip()
+                    try:
+                        cmd = [
+                            "generate", "create", "seedance_2_0",
+                            "--prompt", full_anim_prompt,
+                            "--image", str(img_dest),
+                            "--aspect_ratio", "9:16",
+                            "--duration", "4",
+                            "--mode", "fast",
+                            "--generate_audio", "true",
+                            "--resolution", "480p",
+                        ]
+                        resp    = run_higgsfield(cmd)
+                        cdn_url = _extract_url(resp)
+                        download_file(cdn_url, mp4_dest)
+                        log_step(f"textcard_{card_id} animation saved")
+                    except Exception as e:
+                        log_step(f"textcard_{card_id} animation failed: {e}", ok=False)
+                        st.warning(f"Card {card_id} animation failed: {e}")
+                else:
+                    log_step(f"textcard_{card_id} animation already exists — skipping")
+
+                prog.progress((i * 2 + 2) / total_steps)
+
+            s_tc.update(label=f"{step_label} — Text cards done ({done_count}/{len(text_cards)})", state="complete")
+        except Exception as e:
+            log_step(f"Text card pipeline failed: {e}", ok=False)
+            s_tc.update(label=f"{step_label} — FAILED: {e}", state="error")
+            st.warning(f"Text cards failed (non-fatal): {e}")
 
 
 def _generate_single_char_image(script: dict, char_id: str):
@@ -1492,88 +1671,8 @@ def _screen_progress_drama(video_id: str, script: dict):
     # ── Step 3b: Generate text card images + animations ───────────────────────
     text_card_paths = {}
     text_cards = script.get("text_cards", [])
-    cards_dir = output_dir / "cards"
-    cards_dir.mkdir(exist_ok=True)
-
-    # Uses module-level _CARD_ANIM_PROMPT — 4s, 480p, typewriter feel
-
-    with st.status(f"Step 3b — Generating {len(text_cards)} text cards (image + animation)...", expanded=True) as s4:
-        prog = st.progress(0)
-        try:
-            from core.higgsfield_cli import generate_image, _extract_url
-            from utils.cli_runner import run_higgsfield
-            from utils.downloader import download_file
-
-            total_steps = len(text_cards) * 2  # image + animate per card
-
-            for i, card in enumerate(text_cards):
-                card_id  = card.get("card_id", i + 1)
-                img_dest = cards_dir / f"textcard_{card_id}.jpg"
-                mp4_dest = cards_dir / f"textcard_{card_id}.mp4"
-
-                # ── 3a: Generate image with text baked into prompt ───────────
-                if not img_dest.exists():
-                    img_prompt = _build_card_image_prompt(card)
-                    if not card.get("image_prompt", "").strip():
-                        log_step(f"textcard_{card_id} missing image_prompt — skipping", ok=False)
-                        prog.progress((i * 2 + 2) / total_steps)
-                        continue
-                    try:
-                        response = generate_image(img_prompt, aspect_ratio="9:16")
-                        cdn_url  = _extract_url(response)
-                        download_file(cdn_url, img_dest)
-                        log_step(f"textcard_{card_id} image saved -> {img_dest.name}")
-                    except Exception as e:
-                        log_step(f"textcard_{card_id} image failed: {e}", ok=False)
-                        st.warning(f"Card {card_id} image failed: {e}")
-                        prog.progress((i * 2 + 2) / total_steps)
-                        continue
-                else:
-                    log_step(f"textcard_{card_id} image already exists — skipping")
-
-                prog.progress((i * 2 + 1) / total_steps)
-
-                # ── 3b: Animate with Seedance 2.0 fast, 4s, typewriter prompt ─
-                if not mp4_dest.exists():
-                    try:
-                        overlay   = card.get("overlay_text", "").strip()
-                        lines     = card.get("text_lines", card.get("lines", []))
-                        lines_str = " / ".join(l for l in lines if l.strip())
-                        text_ref  = f'Header: "{overlay}". ' if overlay else ""
-                        text_ref += f'Lines: {lines_str}.' if lines_str else ""
-                        full_anim_prompt = f"{_CARD_ANIM_PROMPT} {text_ref}".strip()
-                        cmd = [
-                            "generate", "create", "seedance_2_0",
-                            "--prompt", full_anim_prompt,
-                            "--image", str(img_dest),
-                            "--aspect_ratio", "9:16",
-                            "--duration", "4",
-                            "--mode", "fast",
-                            "--generate_audio", "true",
-                            "--resolution", config.HIGGSFIELD_VIDEO_RESOLUTION,
-                        ]
-                        response = run_higgsfield(cmd)
-                        cdn_url  = _extract_url(response)
-                        download_file(cdn_url, mp4_dest)
-                        text_card_paths[f"card_{card_id}"] = str(mp4_dest)
-                        log_step(f"textcard_{card_id} animated -> {mp4_dest.name}")
-                    except Exception as e:
-                        log_step(f"textcard_{card_id} animation failed: {e}", ok=False)
-                        st.warning(f"Card {card_id} animation failed: {e}")
-                        # Fall back to static image path so output pack still has something
-                        text_card_paths[f"card_{card_id}"] = str(img_dest)
-                else:
-                    text_card_paths[f"card_{card_id}"] = str(mp4_dest)
-                    log_step(f"textcard_{card_id} mp4 already exists — skipping")
-
-                prog.progress((i * 2 + 2) / total_steps)
-
-            s4.update(label=f"Step 3 — Text cards done ({len(text_card_paths)}/{len(text_cards)})", state="complete")
-        except Exception as e:
-            log_step(f"Text card generation failed: {e}", ok=False)
-            s4.update(label=f"Step 3 — FAILED: {e}", state="error")
-            st.error(str(e))
-            # Non-fatal — continue to save output
+    # ── Step 3b: Text cards (shared helper) ──────────────────────────────────
+    _run_text_card_pipeline(script, output_dir, log, step_label="Step 3b")
 
     # ── Save drama output pack ────────────────────────────────────────────────
     drama_output = {
@@ -1600,6 +1699,10 @@ def screen_progress():
     all_scenes: list[Scene] = st.session_state["scenes"]
     use_heygen = st.session_state.get("use_heygen", False)
     video_type = st.session_state.get("video_type", "type1")
+
+    if st.button("← Back to review", key="progress_back"):
+        st.session_state["screen"] = "review"
+        st.rerun()
 
     st.markdown(f"## Generating — `{video_id}`")
 
@@ -1746,6 +1849,9 @@ def screen_progress():
                 s5.update(label=f"Step 5 — Lipsync FAILED: {e}", state="error")
                 st.warning(f"HeyGen lipsync failed: {e}. Avatar scenes will have no video.")
 
+    # ── Step 6: Text cards ────────────────────────────────────────────────────
+    _run_text_card_pipeline(st.session_state["script_data"], output_dir, log, step_label="Step 6")
+
     # Merge all scenes for output display
     final_scenes = sorted(avatar_scenes + cutaway_scenes, key=lambda s: s.scene_number)
 
@@ -1821,6 +1927,10 @@ def screen_output():
     script = st.session_state["script_data"]
     output_dir = Path(st.session_state["output_dir"])
     video_type = st.session_state.get("video_type", "type1")
+
+    if st.button("← Back to review", key="output_back"):
+        st.session_state["screen"] = "review"
+        st.rerun()
 
     st.markdown(f"## Output — `{video_id}`")
 
@@ -1956,6 +2066,10 @@ def screen_reanimate():
     output_dir = Path(st.session_state["output_dir"])
     _anim_model = st.session_state.get("animation_model", "grok_video")
     _anim_label = "Kling 2.6" if _anim_model == "kling2_6" else "grok-imagine"
+
+    if st.button("← Back to output", key="reanimate_back"):
+        st.session_state["screen"] = "output"
+        st.rerun()
 
     st.markdown(f"## Re-animating — `{video_id}`")
     st.caption(f"Restoring saved images and re-running animation via {_anim_label}. Skipping audio + image generation.")
