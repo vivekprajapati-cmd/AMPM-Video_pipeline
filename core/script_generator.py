@@ -700,6 +700,63 @@ def _validate_script_drama(data: dict) -> None:
     logger.info("Drama script validation passed.")
 
 
+def _trim_drama_takes(data: dict) -> dict:
+    """
+    Strips stage directions before counting, then trims any take whose spoken
+    word count exceeds the per-duration limit (6s=9 words, 8s=12 words).
+    Uses Groq for the rewrite — fast, cheap, always available.
+    """
+    import re as _re
+
+    takes = data.get("takes", {})
+    trimmed = 0
+    for char_id, char_takes in takes.items():
+        for t in char_takes:
+            script = (t.get("script") or "").strip()
+            if not script:
+                continue
+            spoken = _re.sub(r"\[.*?\]", "", script).strip()
+            wc = len(spoken.split())
+            dur = t.get("duration_seconds", 8)
+            limit = 9 if dur <= 6 else 12
+            if wc <= limit:
+                continue
+
+            logger.info(f"  {char_id} take {t.get('take_number')} — {wc} spoken words > {limit} limit. Trimming...")
+            system = (
+                "You are a video script editor. Rewrite a character take so its spoken word count "
+                f"is {limit} words or fewer. Keep stage directions like [beat] and [pause Xs] — "
+                "they are NOT spoken and do NOT count toward the word limit. "
+                "Preserve the meaning, the language (Hindi/Hinglish/English), and the emotional tone. "
+                "Return only the rewritten take. No labels, no explanation."
+            )
+            user = (
+                f"This take has {wc} spoken words but the hard limit is {limit} words ({dur}s clip, slow delivery).\n"
+                f"Trim it to {limit} spoken words or fewer. Keep [beat]/[pause] markers.\n\n"
+                f"Take:\n{script}\n\nReturn only the rewritten take."
+            )
+            try:
+                from groq import Groq
+                client = Groq(api_key=config.GROQ_API_KEY)
+                resp = client.chat.completions.create(
+                    model=config.GROQ_MODEL,
+                    max_tokens=80,
+                    messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+                )
+                rewritten = resp.choices[0].message.content.strip()
+                new_spoken = _re.sub(r"\[.*?\]", "", rewritten).strip()
+                new_wc = len(new_spoken.split())
+                logger.info(f"    {char_id} take {t.get('take_number')}: {wc} → {new_wc} spoken words")
+                t["script"] = rewritten
+                trimmed += 1
+            except Exception as e:
+                logger.warning(f"  Take trim failed for {char_id} take {t.get('take_number')}: {e} — keeping original.")
+
+    if trimmed:
+        logger.info(f"Auto-trimmed {trimmed} drama take(s) to fit clip duration.")
+    return data
+
+
 def _expand_type2_avatar_narrations(data: dict, provider: str) -> dict:
     """Auto-expands Type 2 AVATAR narrations that are under 430 chars to hit the 430-450 target."""
     scenes = data.get("scenes", [])

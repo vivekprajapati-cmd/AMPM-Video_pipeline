@@ -640,6 +640,130 @@ def screen_input():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# ── Pre-flight validation ──────────────────────────────────────────────────────
+def _preflight_checks(script: dict, scenes: list, is_type2: bool) -> list[str]:
+    """
+    Returns a list of blocking issues. Empty list = all clear.
+    Called twice: once to display, once to gate the button — must be pure/fast.
+    """
+    issues = []
+    env = config.check_env()
+
+    # API keys
+    if not env.get("elevenlabs"):
+        issues.append("ElevenLabs API key missing — audio generation will fail.")
+    if not env.get("heygen") and st.session_state.get("use_heygen", False):
+        issues.append("HeyGen API key missing but HeyGen avatar generation is enabled.")
+
+    # Higgsfield CLI
+    import shutil
+    _HIGGSFIELD_FALLBACK = r"C:\Users\HR 1\AppData\Roaming\fnm\node-versions\v20.20.2\installation\higgsfield.cmd"
+    hf_available = shutil.which("higgsfield") or Path(_HIGGSFIELD_FALLBACK).exists()
+    if not hf_available:
+        issues.append("Higgsfield CLI not found — image/video generation will fail.")
+
+    # Script fields
+    if not script.get("video_id"):
+        issues.append("Script missing video_id.")
+    if not script.get("persona"):
+        issues.append("Script missing persona — cannot resolve voice or avatar.")
+
+    # Narration checks
+    avatar_min = 430 if is_type2 else 100
+    avatar_max = 500 if is_type2 else 165
+    target_label = "430-450" if is_type2 else "~150"
+    for s in scenes:
+        if s.type != "AVATAR":
+            continue
+        cc = len(s.narration or "")
+        if cc < avatar_min:
+            issues.append(f"Scene {s.scene_number} narration too short ({cc} chars — target {target_label}). May cause audio to run short.")
+        if cc > avatar_max:
+            issues.append(f"Scene {s.scene_number} narration too long ({cc} chars — max {avatar_max}). Audio may get cut off.")
+
+    # Image prompts — cutaway scenes must have one
+    for s in scenes:
+        if s.type == "CUTAWAY" and not (s.image_prompt or "").strip():
+            issues.append(f"Scene {s.scene_number} (CUTAWAY) has no image prompt — Higgsfield will fail.")
+
+    # Text cards (type1/type2) — must have both cards with non-empty lines
+    text_cards = script.get("text_cards", [])
+    if not is_type2 and len(text_cards) < 2:
+        issues.append(f"Script has {len(text_cards)} text card(s) — expected 2.")
+    for card in text_cards:
+        lines = card.get("text_lines", [])
+        if len(lines) < 2 or any(not l.strip() for l in lines):
+            issues.append(f"Text card {card.get('card_id', '?')} has empty or missing text lines.")
+
+    return issues
+
+
+def _preflight_checks_drama(script: dict) -> list[str]:
+    """Pre-flight checks specific to Type 3 (micro-drama) scripts."""
+    issues = []
+    env = config.check_env()
+    import shutil
+    _HIGGSFIELD_FALLBACK = r"C:\Users\HR 1\AppData\Roaming\fnm\node-versions\v20.20.2\installation\higgsfield.cmd"
+    hf_available = shutil.which("higgsfield") or Path(_HIGGSFIELD_FALLBACK).exists()
+
+    if not env.get("elevenlabs"):
+        issues.append("ElevenLabs API key missing — audio generation will fail.")
+    if not hf_available:
+        issues.append("Higgsfield CLI not found — image/video generation will fail.")
+    if not script.get("video_id"):
+        issues.append("Script missing video_id.")
+    if not script.get("beat"):
+        issues.append("Script missing beat.")
+
+    # Characters
+    chars = script.get("characters", {})
+    for char_id in ("char1", "char2"):
+        char = chars.get(char_id, {})
+        if not char:
+            issues.append(f"{char_id} is missing from script.")
+            continue
+        if not (char.get("avatar_image_prompt") or "").strip():
+            issues.append(f"{char_id} has no avatar image prompt.")
+        if not (char.get("higgsfield_prompt") or "").strip():
+            issues.append(f"{char_id} has no Higgsfield lipsync prompt.")
+
+    # Takes — each char needs exactly 3, each with a non-empty script
+    takes = script.get("takes", {})
+    for char_id in ("char1", "char2"):
+        char_takes = takes.get(char_id, [])
+        if len(char_takes) != 3:
+            issues.append(f"{char_id} has {len(char_takes)} take(s) — expected 3.")
+        for t in char_takes:
+            take_script = (t.get("script") or t.get("narration") or "").strip()
+            t_num = t.get("take_number", "?")
+            if not take_script:
+                issues.append(f"{char_id} take {t_num} has no script/narration.")
+            else:
+                import re as _re
+                spoken = _re.sub(r"\[.*?\]", "", take_script).strip()
+                wc = len(spoken.split())
+                dur = t.get("duration_seconds", 8)
+                limit = 9 if dur <= 6 else 12
+                if wc > limit:
+                    issues.append(f"WARN:{char_id} take {t_num} is {wc} spoken words — max {limit} for {dur}s clip. Audio may cut off mid-sentence.")
+
+    # Title card
+    tc = script.get("title_card", {})
+    if not (tc.get("hook_line") or "").strip():
+        issues.append("Title card has no hook line.")
+
+    # Text cards
+    text_cards = script.get("text_cards", [])
+    if len(text_cards) < 2:
+        issues.append(f"Script has {len(text_cards)} text card(s) — expected 2.")
+    for card in text_cards:
+        lines = card.get("text_lines", [])
+        if len(lines) < 2 or any(not l.strip() for l in lines):
+            issues.append(f"Text card {card.get('card_id', '?')} has empty or missing text lines.")
+
+    return issues
+
+
 # SCREEN 2 — SCRIPT REVIEW
 # ═══════════════════════════════════════════════════════════════════════════════
 def screen_review():
@@ -825,6 +949,24 @@ def screen_review():
     st.session_state["script_data"] = script
 
     st.markdown("---")
+
+    # ── Pre-flight checklist ───────────────────────────────────────────────────
+    if st.session_state.get("mode", "[FULL]") != "[PACK]":
+        st.markdown("### Pre-flight checklist")
+        preflight_issues = _preflight_checks(script, updated_scenes, is_type2)
+        blockers = [i for i in preflight_issues if not i.startswith("WARN:")]
+        warnings = [i[5:] for i in preflight_issues if i.startswith("WARN:")]
+        for issue in blockers:
+            st.error(f"BLOCKED — {issue}")
+        for issue in warnings:
+            st.warning(f"WARNING — {issue}")
+        if blockers:
+            st.error("Fix the BLOCKED issues above before generating.")
+        elif warnings:
+            st.info("Warnings present — you can still generate, but review them.")
+        else:
+            st.success("All checks passed — ready to generate.")
+
     col_back, col_fwd = st.columns([1, 3])
     with col_back:
         if st.button("Back to input"):
@@ -836,7 +978,8 @@ def screen_review():
             if st.button("Export prompt pack JSON", type="primary"):
                 _export_prompt_pack(script, updated_scenes)
         else:
-            if st.button("Generate video", type="primary"):
+            preflight_ok = not any(not i.startswith("WARN:") for i in _preflight_checks(script, updated_scenes, is_type2))
+            if st.button("Generate video", type="primary", disabled=not preflight_ok):
                 st.session_state["screen"] = "progress"
                 st.rerun()
 
@@ -2413,6 +2556,24 @@ def screen_review_drama():
         st.code(script.get("negative_prompt", ""), language=None)
 
     st.markdown("---")
+
+    # ── Pre-flight checklist (drama) ───────────────────────────────────────────
+    if st.session_state.get("mode", "[FULL]") != "[PACK]":
+        st.markdown("### Pre-flight checklist")
+        drama_issues = _preflight_checks_drama(script)
+        blockers = [i for i in drama_issues if not i.startswith("WARN:")]
+        warnings = [i[5:] for i in drama_issues if i.startswith("WARN:")]
+        for issue in blockers:
+            st.error(f"BLOCKED — {issue}")
+        for issue in warnings:
+            st.warning(f"WARNING — {issue}")
+        if blockers:
+            st.error("Fix the BLOCKED issues above before generating.")
+        elif warnings:
+            st.info("Warnings present — you can still generate, but review them. Edit takes in the review screen above.")
+        else:
+            st.success("All checks passed — ready to generate.")
+
     col_back, col_fwd = st.columns([1, 3])
     with col_back:
         if st.button("Back to input"):
@@ -2430,7 +2591,8 @@ def screen_review_drama():
                 type="primary",
             )
         else:
-            if st.button("Generate video", type="primary"):
+            drama_ok = not any(not i.startswith("WARN:") for i in _preflight_checks_drama(script))
+            if st.button("Generate video", type="primary", disabled=not drama_ok):
                 st.session_state["screen"] = "progress"
                 st.rerun()
 

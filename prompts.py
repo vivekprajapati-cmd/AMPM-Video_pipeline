@@ -460,8 +460,15 @@ DIALOGUE RULES
 - The convergence line must be a single sentence that both characters say together — the thesis of the story.
 - Never write characters debating or arguing. They are parallel perspectives converging, not opponents.
 - PACING RULE: Each take is delivered slowly, calmly, with full weight on every word. NOT rushed. NOT conversational speed. Think of a person who has lived through something — they pause, they breathe, they don't hurry. Silence and pauses are part of the performance. Write for that pace.
-- WORD COUNT RULE: Every clip is hard-capped at 8 seconds. Delivery pace is slow and deliberate — approximately 1.2 to 1.5 words per second, not 2. At that pace: 6s clip = 7-9 words max. 8s clip = 10-12 words max. Do NOT exceed these counts. Fewer words with more [beat] and [pause Xs] markers is always better than more words delivered fast. Count every word before finalizing. A take over the word limit WILL be cut off mid-sentence.
+- WORD COUNT RULE — HARD LIMIT, NO EXCEPTIONS:
+  Every clip is hard-capped by duration. Delivery pace is slow — 1.2 to 1.5 words per second.
+  6s clip = MAX 9 spoken words. 8s clip = MAX 12 spoken words.
+  SPOKEN WORDS ONLY. [beat], [pause 1s], [pause 0.5s] are NOT words — do not count them.
+  Count ONLY the actual dialogue words. Example: "Mayank gaya. [beat] Ek darwaze ki wajah se." = 6 spoken words. Correct.
+  Before writing each take, count the spoken words. If over the limit, cut words — not pace.
+  A take over the word limit WILL be physically cut off mid-sentence by the video editor. There is no fix after generation.
 - Every line must feel like the character has lived it — not recited it. Specific over generic. Concrete detail over abstract statement.
+- CENTRAL FACT RULE: The single most concrete fact of the incident — cause of death, method of crime, specific injury, exact number of casualties — MUST be spoken explicitly by at least one character in their dialogue. Do NOT relegate it only to the title card or text cards. If someone was stabbed, a character must say it (e.g. "chaku maara", "knife se maara"). If a building collapsed, someone must say it collapsed. If 8 people died, someone must say 8 died. The audience hears the dialogue — if it's not spoken, it doesn't land.
 
 TEXT CARD RULES
 - Maximum 2 text cards per video. Minimum 1.
@@ -474,7 +481,7 @@ TEXT CARD RULES
 - overlay_text: short label for the card, max 5 words, used as a visual header.
 
 AVATAR IMAGE PROMPT RULES
-- Each character needs a photorealistic portrait prompt — not illustration style.
+- Each character needs a portrait prompt. Style: grounded realism — real human face and proportions, can have a slight editorial/graphic novel quality. NOT hyper-photorealistic studio portrait. NOT full illustration. Aim for the look of a cinematic still or a documentary photograph — a real person, slightly elevated in visual style.
 - Include: appearance, age, clothing, setting, lighting, expression, shot framing, camera lock.
 - Expression must match emotional register — not neutral stock photo. Tired is tired. Angry is contained.
 - Shot: medium close-up, chest-up, eye-level, locked, no movement.
@@ -493,17 +500,20 @@ HIGGSFIELD LIPSYNC PROMPT RULES
 - DO NOT include any duration, seconds, or time reference in higgsfield_prompt — duration is set per-take separately, not in the character prompt.
 - End every prompt with: Exclude: no captions, no subtitles, no text overlay, no logos, no watermark, no UI, no graphics, no words in frame. Negative: overacting, exaggerated expression, camera shake, identity drift, face distortion, unnatural blinking, rushed delivery, fast speech.
 
-PER-TAKE CAMERA RULE
-- Every take for the same character MUST use a different camera framing. No two takes of the same character share the same shot.
-- Assign a unique camera_angle to each take. Choose from — but do not repeat within the same character:
+PER-TAKE CAMERA RULE — MANDATORY. EVERY TAKE MUST HAVE A DIFFERENT ANGLE.
+- Every take for the same character MUST use a different camera framing. No two takes of the same character share the same shot. Repeating an angle is invalid output.
+- Assign a unique camera_angle to each take. Available options (pick 3 different ones per character):
   - "medium close-up, slight left angle, eye-level"
   - "tight close-up, frontal, slightly low angle"
   - "medium shot, slight right angle, eye-level"
   - "close-up, frontal, slightly high angle"
   - "medium close-up, right profile lean, eye-level"
   - "wide medium shot, centered, eye-level"
-- The camera_angle value is injected directly into the Seedance prompt per take — it overrides the shot framing in higgsfield_prompt for that specific clip.
-- Take 1 (opening): wider shot — viewer establishing the character.
+- char1 take 1, take 2, take 3 must each use a DIFFERENT angle from the list above.
+- char2 take 1, take 2 must each use a DIFFERENT angle from the list above.
+- char1 and char2 may share angles — the constraint is within the same character only.
+- The camera_angle is written into the take's higgsfield_prompt field — start the prompt with the angle, e.g. "Medium shot, slight right angle, eye-level. [character description + setting + delivery]".
+- Take 1 (opening): wider establishing shot.
 - Take 2 (main): closer or angled — emotional intensity.
 - Take 3 / split screen: tight frontal — convergence moment.
 
@@ -585,25 +595,25 @@ Schema:
         "duration_seconds": 6,
         "purpose": "opening — emotional hook, restraint. MAX 6s = 7-9 words. Slow delivery.",
         "camera_angle": "<unique shot — e.g. medium close-up, slight left angle, eye-level>",
-        "script": "<7-9 words max. One tight emotional statement. Specific. [beat] or [pause Xs] — silence is part of it.>"
+        "script": "<SPOKEN WORDS ONLY — MAX 9. [beat]/[pause Xs] do NOT count. Count actual dialogue words before writing. One tight emotional statement. Specific.>"
       },
       {
         "take_number": 2,
         "timecode_start": "0:14",
         "timecode_end": "0:22",
         "duration_seconds": 8,
-        "purpose": "main take — human cost made concrete. MAX 8s = 10-12 words. Slow delivery.",
+        "purpose": "main take — human cost made concrete. MAX 8s = 12 spoken words. Slow delivery.",
         "camera_angle": "<different shot from take 1 — e.g. tight close-up, frontal, slightly low angle>",
-        "script": "<10-12 words max. Specific named detail, concrete consequence. [beat] between thoughts. Ends with weight, not speed. Count words.>"
+        "script": "<SPOKEN WORDS ONLY — MAX 12. [beat]/[pause Xs] do NOT count. Count actual dialogue words before writing. Specific named detail, concrete consequence.>"
       },
       {
         "take_number": 3,
         "timecode_start": "0:38",
         "timecode_end": "0:44",
         "duration_seconds": 6,
-        "purpose": "split screen left — char1 line then convergence. MAX 6s = 7-9 words total.",
+        "purpose": "split screen left — char1 solo line then convergence. MAX 6s = 9 spoken words total across both lines.",
         "camera_angle": "<different shot from takes 1 and 2 — e.g. close-up, frontal, slightly high angle>",
-        "script": "<char1 solo line — 3-4 words>\\n[pause 0.5s]\\n<convergence line — must exactly match char2 take 3 convergence line, 4-5 words>"
+        "script": "<char1 solo line — MAX 4 spoken words>\\n[pause 0.5s]\\n<convergence line — MAX 5 spoken words, must exactly match char2 take 3 convergence line>"
       }
     ],
     "char2": [
@@ -612,27 +622,27 @@ Schema:
         "timecode_start": "0:22",
         "timecode_end": "0:30",
         "duration_seconds": 8,
-        "purpose": "main take A — systemic layer, institutional failure. MAX 8s = 10-12 words. Slow delivery.",
+        "purpose": "main take A — systemic layer, institutional failure. MAX 8s = 12 spoken words. Slow delivery.",
         "camera_angle": "<unique shot — e.g. medium shot, slight right angle, eye-level>",
-        "script": "<10-12 words max. Clinical, flat. One specific document/decision/report that failed. [beat] between thoughts.>"
+        "script": "<SPOKEN WORDS ONLY — MAX 12. [beat]/[pause Xs] do NOT count. Count actual dialogue words before writing. Clinical, flat, one specific failure.>"
       },
       {
         "take_number": 2,
         "timecode_start": "0:30",
         "timecode_end": "0:38",
         "duration_seconds": 8,
-        "purpose": "main take B — escalation, structural truth. MAX 8s = 10-12 words. Slow delivery.",
+        "purpose": "main take B — escalation, structural truth. MAX 8s = 12 spoken words. Slow delivery.",
         "camera_angle": "<different shot from take 1 — e.g. medium close-up, frontal, slightly low angle>",
-        "script": "<10-12 words max. Exhausted. The deeper systemic reason. Ends with the structural truth, delivered slowly.>"
+        "script": "<SPOKEN WORDS ONLY — MAX 12. [beat]/[pause Xs] do NOT count. Count actual dialogue words before writing. Exhausted. Deeper structural reason.>"
       },
       {
         "take_number": 3,
         "timecode_start": "0:38",
         "timecode_end": "0:44",
         "duration_seconds": 6,
-        "purpose": "split screen right — char2 line then convergence. MAX 6s = 7-9 words total.",
+        "purpose": "split screen right — char2 solo line then convergence. MAX 6s = 9 spoken words total across both lines.",
         "camera_angle": "<different shot from takes 1 and 2 — e.g. tight close-up, slight left lean, eye-level>",
-        "script": "<char2 solo line — 3-4 words>\\n[pause 0.5s]\\n<convergence line — must exactly match char1 take 3 convergence line, 4-5 words>"
+        "script": "<char2 solo line — MAX 4 spoken words>\\n[pause 0.5s]\\n<convergence line — MAX 5 spoken words, must exactly match char1 take 3 convergence line>"
       }
     ]
   },
